@@ -24,6 +24,17 @@ async function getUserId(request: Request, cookies: any): Promise<string | null>
 }
 
 /**
+ * Resize and compress image using canvas (client-side) approach
+ * For server-side, we'll just validate and convert to base64 with size limits
+ */
+async function processImage(buffer: Buffer, mimeType: string): Promise<string> {
+  // For now, just convert to base64 with size validation
+  // The client should handle resizing before upload
+  const base64 = buffer.toString('base64');
+  return `data:${mimeType};base64,${base64}`;
+}
+
+/**
  * POST /api/user/image
  * Upload and update user profile image
  *
@@ -59,17 +70,29 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
       return json({ error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' }, { status: 400 });
     }
 
-    // Validate file size (max 2MB)
-    const maxSize = 2 * 1024 * 1024; // 2MB
+    // Validate file size (max 500KB to prevent connection issues)
+    const maxSize = 500 * 1024; // 500KB
     if (file.size > maxSize) {
-      return json({ error: 'File too large. Maximum size is 2MB.' }, { status: 400 });
+      return json({
+        error: 'File too large. Please compress your image to under 500KB.',
+        details: `Your file is ${(file.size / 1024).toFixed(0)}KB. Recommended: Use a square image under 500KB.`
+      }, { status: 400 });
     }
 
     // Convert file to base64
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    const base64 = buffer.toString('base64');
-    const dataUrl = `data:${file.type};base64,${base64}`;
+
+    // Estimate base64 size (base64 is ~33% larger)
+    const estimatedBase64Size = buffer.length * 1.33;
+    if (estimatedBase64Size > 500_000) { // ~500KB limit for base64
+      return json({
+        error: 'Image would be too large after encoding. Please use a smaller image.',
+        details: `Recommended: Use a square image under 400KB.`
+      }, { status: 400 });
+    }
+
+    const dataUrl = await processImage(buffer, file.type);
 
     console.log('[Image Upload] Base64 length:', dataUrl.length);
 
@@ -87,7 +110,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     });
   } catch (error) {
     console.error('[Image Upload] Error:', error);
-    return json({ error: 'Failed to upload image' }, { status: 500 });
+    return json({ error: 'Failed to upload image', details: error instanceof Error ? error.message : 'Unknown error' }, { status: 500 });
   }
 };
 

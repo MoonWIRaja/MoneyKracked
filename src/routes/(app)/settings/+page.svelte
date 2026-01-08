@@ -177,6 +177,52 @@
     fileInput.click();
   }
 
+  // Resize image on client-side before upload to reduce file size
+  function resizeImage(file: File, maxWidth: number = 200, maxHeight: number = 200, quality: number = 0.8): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const reader = new FileReader();
+
+      reader.onload = (e) => {
+        img.src = e.target?.result as string;
+      };
+
+      img.onload = () => {
+        // Calculate new dimensions (square crop)
+        const size = Math.min(maxWidth, maxHeight);
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+
+        if (!ctx) {
+          reject(new Error('Failed to get canvas context'));
+          return;
+        }
+
+        // Calculate crop to center
+        const sourceSize = Math.min(img.width, img.height);
+        const sourceX = (img.width - sourceSize) / 2;
+        const sourceY = (img.height - sourceSize) / 2;
+
+        // Draw image cropped to square
+        ctx.drawImage(img, sourceX, sourceY, sourceSize, sourceSize, 0, 0, size, size);
+
+        // Convert to blob
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error('Failed to create blob'));
+          }
+        }, 'image/jpeg', quality);
+      };
+
+      img.onerror = () => reject(new Error('Failed to load image'));
+      reader.readAsDataURL(file);
+    });
+  }
+
   async function handleFileSelect(event: Event) {
     const target = event.target as HTMLInputElement;
     const file = target.files?.[0];
@@ -189,25 +235,30 @@
       return;
     }
 
-    // Validate file size (max 2MB)
-    const maxSize = 2 * 1024 * 1024;
+    // Validate file size (max 5MB for initial file - we'll resize it)
+    const maxSize = 5 * 1024 * 1024;
     if (file.size > maxSize) {
-      alert('File too large. Maximum size is 2MB.');
+      alert('File too large. Maximum size is 5MB.');
       return;
     }
 
-    // Create preview
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      imagePreview = e.target?.result as string;
-    };
-    reader.readAsDataURL(file);
-
-    // Upload to server
     uploadInProgress = true;
+
     try {
+      // Resize image to 200x200 with 80% quality
+      const resizedBlob = await resizeImage(file, 200, 200, 0.8);
+      console.log('[Settings] Original size:', file.size, 'Resized size:', resizedBlob.size);
+
+      // Create preview from resized blob
+      const previewReader = new FileReader();
+      previewReader.onload = (e) => {
+        imagePreview = e.target?.result as string;
+      };
+      previewReader.readAsDataURL(resizedBlob);
+
+      // Upload resized image
       const formData = new FormData();
-      formData.append('image', file);
+      formData.append('image', resizedBlob, 'profile.jpg');
 
       const response = await fetch('/api/user/image', {
         method: 'POST',
@@ -223,7 +274,7 @@
         linkSuccess = 'Profile image updated successfully!';
         setTimeout(() => linkSuccess = '', 3000);
       } else {
-        throw new Error(result.error || 'Failed to upload image');
+        throw new Error(result.details || result.error || 'Failed to upload image');
       }
     } catch (err: any) {
       console.error('[Settings] Image upload failed:', err);
