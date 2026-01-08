@@ -411,7 +411,6 @@
         backupCodes = result.backupCodes || [];
         setupStep = 'backup';
         twoFactorEnabled = true;
-        showBackupCodes = true;
       }
     } catch (err: any) {
       console.error('[Settings] 2FA enable error:', err);
@@ -427,7 +426,6 @@
     verifyCode = '';
     setupStep = 'scan';
     backupCodes = [];
-    showBackupCodes = false;
   }
 
   // Show disable 2FA dialog
