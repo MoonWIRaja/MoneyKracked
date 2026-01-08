@@ -1,0 +1,62 @@
+import { json } from '@sveltejs/kit';
+import type { RequestHandler } from './$types';
+import { db } from '$lib/server/db';
+import { account } from '$lib/server/db/schema';
+import { eq, and } from 'drizzle-orm';
+import { auth } from '$lib/server/auth';
+
+/**
+ * API endpoint to check if current user has GitHub linked.
+ * Used by Settings page to always get fresh data.
+ */
+export const GET: RequestHandler = async ({ request, cookies }) => {
+  try {
+    // Get session
+    const session = await auth.api.getSession({
+      headers: request.headers
+    });
+    
+    // Fallback: check custom session cookie
+    let userId = session?.user?.id;
+    
+    if (!userId) {
+      const customToken = cookies.get('better-auth.session_token');
+      if (customToken) {
+        const { session: sessionTable, user: userTable } = await import('$lib/server/db/schema');
+        const { gt } = await import('drizzle-orm');
+        
+        const dbSession = await db.query.session.findFirst({
+          where: and(
+            eq(sessionTable.token, customToken),
+            gt(sessionTable.expiresAt, new Date())
+          )
+        });
+        
+        if (dbSession) {
+          userId = dbSession.userId;
+        }
+      }
+    }
+    
+    if (!userId) {
+      return json({ linked: false, error: 'Not authenticated' }, { status: 401 });
+    }
+    
+    // Check if GitHub is linked
+    const linkedAccount = await db.query.account.findFirst({
+      where: and(
+        eq(account.userId, userId),
+        eq(account.providerId, 'github')
+      )
+    });
+    
+    return json({ 
+      linked: !!linkedAccount,
+      accountId: linkedAccount?.accountId || null
+    });
+    
+  } catch (err: any) {
+    console.error('Error checking GitHub status:', err);
+    return json({ linked: false, error: err.message }, { status: 500 });
+  }
+};
