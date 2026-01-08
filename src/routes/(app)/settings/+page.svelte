@@ -404,13 +404,15 @@
       });
       const result = await response.json();
 
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to enable 2FA');
+      }
+
       if (result.success) {
         backupCodes = result.backupCodes || [];
         setupStep = 'backup';
         twoFactorEnabled = true;
         showBackupCodes = true;
-      } else {
-        throw new Error(result.error || 'Invalid code');
       }
     } catch (err: any) {
       console.error('[Settings] 2FA enable error:', err);
