@@ -342,7 +342,6 @@
   let verifyCode = $state('');
   let setupStep = $state<'scan' | 'verify' | 'backup'>('scan');
   let backupCodes = $state<string[]>([]);
-  let showBackupCodes = $state(false);
 
   // Disable state
   let disableCode = $state('');
@@ -832,7 +831,7 @@
             </div>
 
             <div class="flex gap-3">
-              <Button variant="secondary" onclick={() => showBackupCodes = false} class="flex-1">
+              <Button variant="secondary" onclick={cancelTwoFactorSetup} class="flex-1">
                 I've Saved My Codes
               </Button>
             </div>

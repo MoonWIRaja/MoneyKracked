@@ -53,10 +53,22 @@
       console.log('Login result:', result);
 
       if (result?.error) {
-        error = result.error.message || 'Login failed. Please check your credentials.';
+        // Check if error is about email verification
+        if (result.error.message?.includes('verify') || result.error.status === 403) {
+          error = 'Please verify your email address before logging in. Check your inbox for the verification link.';
+        } else {
+          error = result.error.message || 'Login failed. Please check your credentials.';
+        }
         loading = false;
       } else if (result?.data) {
         const user = result.data.user;
+
+        // Check if user's email is verified (if verification is enabled)
+        if (user.emailVerified === false) {
+          error = 'Please verify your email address before logging in. Check your inbox for the verification link.';
+          loading = false;
+          return;
+        }
 
         // Check if user has 2FA enabled by fetching from database
         // Better Auth doesn't include custom fields in the user object
