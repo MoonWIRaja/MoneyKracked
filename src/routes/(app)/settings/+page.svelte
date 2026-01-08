@@ -92,11 +92,12 @@
       console.error('[Settings] Failed to save preferences:', err);
     }
   }
-  
+
   // Fetch on mount
   onMount(() => {
     fetchGitHubStatus();
     fetchPreferences();
+    fetchTwoFactorStatus();
   });
   
   // Auto-save when preferences change
@@ -328,6 +329,153 @@
   function closeImageMenu() {
     showImageMenu = false;
   }
+
+  // ===== Two-Factor Authentication (2FA) =====
+  let twoFactorEnabled = $state(false);
+  let twoFactorLoading = $state(true);
+  let showTwoFactorSetup = $state(false);
+  let showDisableTwoFactor = $state(false);
+
+  // Setup state
+  let qrCodeUrl = $state('');
+  let setupSecret = $state('');
+  let verifyCode = $state('');
+  let setupStep = $state<'scan' | 'verify' | 'backup'>('scan');
+  let backupCodes = $state<string[]>([]);
+  let showBackupCodes = $state(false);
+
+  // Disable state
+  let disableCode = $state('');
+  let disableMethod = $state<'totp' | 'backup'>('totp');
+
+  // Fetch 2FA status
+  async function fetchTwoFactorStatus() {
+    twoFactorLoading = true;
+    try {
+      const response = await fetch('/api/2fa', {
+        credentials: 'include'
+      });
+      const result = await response.json();
+      twoFactorEnabled = result.enabled || false;
+      console.log('[Settings] 2FA status:', twoFactorEnabled);
+    } catch (err) {
+      console.error('[Settings] Failed to fetch 2FA status:', err);
+    } finally {
+      twoFactorLoading = false;
+    }
+  }
+
+  // Setup 2FA - Generate QR code
+  async function setupTwoFactor() {
+    try {
+      const response = await fetch('/api/2fa', {
+        method: 'POST',
+        credentials: 'include'
+      });
+      const result = await response.json();
+
+      if (result.qrCode) {
+        qrCodeUrl = result.qrCode;
+        setupSecret = result.secret;
+        setupStep = 'scan';
+        showTwoFactorSetup = true;
+      } else {
+        throw new Error(result.error || 'Failed to setup 2FA');
+      }
+    } catch (err: any) {
+      console.error('[Settings] 2FA setup error:', err);
+      alert(err.message || 'Failed to setup 2FA');
+    }
+  }
+
+  // Verify and enable 2FA
+  async function enableTwoFactor() {
+    if (!verifyCode || verifyCode.length !== 6) {
+      alert('Please enter a valid 6-digit code');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/2fa', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ code: verifyCode })
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        backupCodes = result.backupCodes || [];
+        setupStep = 'backup';
+        twoFactorEnabled = true;
+        showBackupCodes = true;
+      } else {
+        throw new Error(result.error || 'Invalid code');
+      }
+    } catch (err: any) {
+      console.error('[Settings] 2FA enable error:', err);
+      alert(err.message || 'Failed to enable 2FA');
+    }
+  }
+
+  // Cancel 2FA setup
+  function cancelTwoFactorSetup() {
+    showTwoFactorSetup = false;
+    qrCodeUrl = '';
+    setupSecret = '';
+    verifyCode = '';
+    setupStep = 'scan';
+    backupCodes = [];
+    showBackupCodes = false;
+  }
+
+  // Show disable 2FA dialog
+  function openDisableTwoFactor() {
+    showDisableTwoFactor = true;
+    disableCode = '';
+    disableMethod = 'totp';
+  }
+
+  // Disable 2FA
+  async function disableTwoFactor() {
+    if (!disableCode) {
+      alert('Please enter a code');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/2fa', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          totpCode: disableMethod === 'totp' ? disableCode : undefined,
+          backupCode: disableMethod === 'backup' ? disableCode : undefined
+        })
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        twoFactorEnabled = false;
+        showDisableTwoFactor = false;
+        disableCode = '';
+        linkSuccess = '2FA disabled successfully';
+        setTimeout(() => linkSuccess = '', 3000);
+      } else {
+        throw new Error(result.error || 'Failed to disable 2FA');
+      }
+    } catch (err: any) {
+      console.error('[Settings] 2FA disable error:', err);
+      alert(err.message || 'Failed to disable 2FA');
+    }
+  }
+
+  // Copy backup code
+  function copyBackupCode(code: string) {
+    navigator.clipboard.writeText(code);
+    linkSuccess = 'Code copied!';
+    setTimeout(() => linkSuccess = '', 2000);
+  }
 </script>
 
 <svelte:head>
@@ -513,7 +661,56 @@
         </div>
       </div>
     </Card>
-    
+
+    <!-- Two-Factor Authentication -->
+    <Card padding="lg">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h3 class="text-lg font-bold text-white">Two-Factor Authentication</h3>
+          <p class="text-sm text-text-muted">Add an extra layer of security to your account</p>
+        </div>
+        {#if twoFactorLoading}
+          <div class="animate-spin rounded-full h-5 w-5 border-2 border-primary border-t-transparent"></div>
+        {:else if twoFactorEnabled}
+          <span class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-success/20 text-success text-sm font-medium">
+            <span class="material-symbols-outlined text-sm">check_circle</span>
+            Enabled
+          </span>
+        {:else}
+          <span class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-text-muted/20 text-text-muted text-sm font-medium">
+            <span class="material-symbols-outlined text-sm">cancel</span>
+            Disabled
+          </span>
+        {/if}
+      </div>
+
+      {#if twoFactorEnabled}
+        <div class="p-4 bg-bg-dark rounded-lg border border-border-dark">
+          <p class="text-sm text-text-muted mb-4">
+            Your account is protected with two-factor authentication. You'll need to enter a code from your authenticator app when logging in.
+          </p>
+          <div class="flex gap-3">
+            <Button variant="danger" onclick={openDisableTwoFactor}>Disable 2FA</Button>
+          </div>
+        </div>
+      {:else}
+        <div class="p-4 bg-bg-dark rounded-lg border border-border-dark">
+          <div class="flex items-start gap-4">
+            <div class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/20 text-primary flex-shrink-0">
+              <span class="material-symbols-outlined">security</span>
+            </div>
+            <div class="flex-1">
+              <h4 class="font-medium text-white mb-1">Protect your account</h4>
+              <p class="text-sm text-text-muted mb-4">
+                Use an authenticator app like Google Authenticator, Authy, or Microsoft Authenticator to generate verification codes.
+              </p>
+              <Button onclick={setupTwoFactor}>Enable Two-Factor Authentication</Button>
+            </div>
+          </div>
+        </div>
+      {/if}
+    </Card>
+
     <!-- Danger Zone -->
     <Card padding="lg">
       <h3 class="text-lg font-bold text-danger mb-4">Danger Zone</h3>
@@ -533,4 +730,173 @@
     onclick={closeImageMenu}
     onkeydown={(e) => e.key === 'Escape' && closeImageMenu()}
   ></div>
+{/if}
+
+<!-- 2FA Setup Modal -->
+{#if showTwoFactorSetup}
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+    <div class="bg-surface-dark rounded-2xl border border-border-dark shadow-2xl max-w-md w-full overflow-hidden">
+      <div class="p-6">
+        <div class="flex items-center justify-between mb-6">
+          <h3 class="text-lg font-bold text-white">Setup Two-Factor Authentication</h3>
+          <button onclick={cancelTwoFactorSetup} class="text-text-muted hover:text-white">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        {#if setupStep === 'scan'}
+          <!-- Step 1: Scan QR Code -->
+          <div class="space-y-4">
+            <p class="text-sm text-text-muted">
+              Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.)
+            </p>
+
+            {#if qrCodeUrl}
+              <div class="flex justify-center p-4 bg-white rounded-lg">
+                <img src={qrCodeUrl} alt="QR Code" class="w-48 h-48" />
+              </div>
+            {/if}
+
+            <div class="p-3 bg-bg-dark rounded-lg border border-border-dark">
+              <p class="text-xs text-text-muted mb-1">Or enter this code manually:</p>
+              <div class="flex items-center justify-between">
+                <code class="text-sm font-mono text-white">{setupSecret}</code>
+                <button onclick={() => copyBackupCode(setupSecret)} class="text-primary hover:text-primary-hover text-sm">
+                  Copy
+                </button>
+              </div>
+            </div>
+
+            <Button class="w-full" onclick={() => setupStep = 'verify'}>
+              Continue
+            </Button>
+          </div>
+
+        {:else if setupStep === 'verify'}
+          <!-- Step 2: Verify Code -->
+          <div class="space-y-4">
+            <p class="text-sm text-text-muted">
+              Enter the 6-digit code from your authenticator app to verify the setup.
+            </p>
+
+            <div>
+              <label for="verify-code" class="block text-sm font-medium text-white mb-2">Verification Code</label>
+              <input
+                id="verify-code"
+                type="text"
+                inputmode="numeric"
+                pattern="[0-9]{6}"
+                maxlength="6"
+                bind:value={verifyCode}
+                placeholder="000000"
+                class="w-full bg-bg-dark border border-border-dark rounded-lg px-4 py-3 text-white text-center text-2xl tracking-widest focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+
+            <div class="flex gap-3">
+              <Button variant="secondary" class="flex-1" onclick={cancelTwoFactorSetup}>
+                Cancel
+              </Button>
+              <Button class="flex-1" onclick={enableTwoFactor}>
+                Verify & Enable
+              </Button>
+            </div>
+          </div>
+
+        {:else if setupStep === 'backup'}
+          <!-- Step 3: Backup Codes -->
+          <div class="space-y-4">
+            <div class="p-4 bg-warning/10 border border-warning/30 rounded-lg">
+              <div class="flex items-start gap-3">
+                <span class="material-symbols-outlined text-warning text-xl">warning</span>
+                <div>
+                  <p class="font-medium text-white">Save these backup codes!</p>
+                  <p class="text-sm text-text-muted">
+                    Store these codes safely. You can use them to access your account if you lose your authenticator device.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div class="p-4 bg-bg-dark rounded-lg border border-border-dark space-y-2 max-h-48 overflow-y-auto">
+              {#each backupCodes as code}
+                <div class="flex items-center justify-between p-2 bg-surface-dark rounded">
+                  <code class="font-mono text-white">{code}</code>
+                  <button onclick={() => copyBackupCode(code)} class="text-primary hover:text-primary-hover">
+                    <span class="material-symbols-outlined text-lg">content_copy</span>
+                  </button>
+                </div>
+              {/each}
+            </div>
+
+            <div class="flex gap-3">
+              <Button variant="secondary" onclick={() => showBackupCodes = false} class="flex-1">
+                I've Saved My Codes
+              </Button>
+            </div>
+          </div>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Disable 2FA Modal -->
+{#if showDisableTwoFactor}
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+    <div class="bg-surface-dark rounded-2xl border border-border-dark shadow-2xl max-w-md w-full">
+      <div class="p-6">
+        <div class="flex items-center justify-between mb-6">
+          <h3 class="text-lg font-bold text-white">Disable Two-Factor Authentication</h3>
+          <button onclick={() => showDisableTwoFactor = false} class="text-text-muted hover:text-white">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <div class="space-y-4">
+          <p class="text-sm text-text-muted">
+            To disable 2FA, enter a verification code from your authenticator app or use one of your backup codes.
+          </p>
+
+          <!-- Method Toggle -->
+          <div class="flex gap-2 p-1 bg-bg-dark rounded-lg">
+            <button
+              class="flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors {disableMethod === 'totp' ? 'bg-primary text-white' : 'text-text-muted hover:text-white'}"
+              onclick={() => disableMethod = 'totp'}
+            >
+              Authenticator Code
+            </button>
+            <button
+              class="flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors {disableMethod === 'backup' ? 'bg-primary text-white' : 'text-text-muted hover:text-white'}"
+              onclick={() => disableMethod = 'backup'}
+            >
+              Backup Code
+            </button>
+          </div>
+
+          <div>
+            <label for="disable-code" class="block text-sm font-medium text-white mb-2">
+              {disableMethod === 'totp' ? 'Enter 6-digit code' : 'Enter backup code'}
+            </label>
+            <input
+              id="disable-code"
+              type="text"
+              bind:value={disableCode}
+              placeholder={disableMethod === 'totp' ? '000000' : 'XXXXXXXX'}
+              class="w-full bg-bg-dark border border-border-dark rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+          </div>
+
+          <div class="flex gap-3">
+            <Button variant="secondary" class="flex-1" onclick={() => showDisableTwoFactor = false}>
+              Cancel
+            </Button>
+            <Button variant="danger" class="flex-1" onclick={disableTwoFactor}>
+              Disable 2FA
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 {/if}
