@@ -5,7 +5,7 @@
     class?: string;
     padding?: 'none' | 'sm' | 'md' | 'lg';
     hover?: boolean;
-    children: Snippet;
+    children?: Snippet;
   }
   
   let {
@@ -31,5 +31,8 @@
     {className}
   "
 >
-  {@render children()}
+  {#if children}
+    {@render children()}
+  {/if}
 </div>
+

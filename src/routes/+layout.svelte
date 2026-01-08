@@ -1,11 +1,11 @@
 <script lang="ts">
   import '../app.css';
   import type { Snippet } from 'svelte';
-  
+
   interface Props {
-    children: Snippet;
+    children?: Snippet;
   }
-  
+
   let { children }: Props = $props();
 </script>
 
@@ -13,4 +13,7 @@
   <title>MoneyKracked - Smart Finance Dashboard</title>
 </svelte:head>
 
-{@render children()}
+{#if children}
+  {@render children()}
+{/if}
+
