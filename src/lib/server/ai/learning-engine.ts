@@ -22,7 +22,179 @@ import {
 	budgets
 } from '$lib/server/db/schema';
 import { eq, and, gte, desc, count, sql, or } from 'drizzle-orm';
-import { GEMINI_API_KEY } from '$env/static/private';
+import { GEMINI_API_KEY, ZAI_API_KEY, AI_PROVIDER } from '$env/static/private';
+
+// ============================================
+// AI API HELPER WITH PROVIDER SELECTION
+// ============================================
+
+// Model preference: try gemini models in order
+const GEMINI_MODELS = [
+	'gemini-3-flash-preview',  // Primary - newest model, best quality
+	'gemini-2.5-flash'         // Fallback - latest flash model
+];
+
+// Model preference: try Z.ai models in order
+// Correct models from Z.ai docs: https://docs.z.ai/guides/llm/glm-4.7
+const ZAI_MODELS = [
+	'glm-4.7'      // Only use glm-4.7 as per user request
+];
+
+/**
+ * Call Z.ai API (OpenAI-compatible format)
+ */
+async function callZaiAPI(content: string, temperature = 0.3, maxTokens = 800, jsonResponse = false): Promise<any> {
+	let lastError: any = null;
+
+	for (const model of ZAI_MODELS) {
+		try {
+			// For GLM Coding Plan, use /api/coding/paas/v4 endpoint
+			const response = await fetch('https://api.z.ai/api/coding/paas/v4/chat/completions', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'Authorization': `Bearer ${ZAI_API_KEY}`
+				},
+				body: JSON.stringify({
+					model: model,
+					messages: [{ role: 'user', content: content }],
+					temperature: temperature,
+					max_tokens: maxTokens,
+					response_format: jsonResponse ? { type: 'json_object' } : undefined
+				})
+			});
+
+			if (response.ok) {
+				const data = await response.json();
+				// Convert Z.ai format to Gemini-like format
+				return {
+					candidates: [{
+						content: {
+							parts: [{ text: data.choices?.[0]?.message?.content || '' }]
+						}
+					}]
+				};
+			}
+
+			// Log error details for debugging
+			const errorText = await response.text();
+			console.error(`[Learning Engine] Z.ai ${model} error:`, response.status, errorText);
+
+			// If rate limit (429) or auth error (401), try next model
+			if (response.status === 429 || response.status === 401) {
+				console.warn(`[Learning Engine] Z.ai ${model} ${response.status === 401 ? 'auth failed' : 'quota exceeded'}, trying next...`);
+				lastError = { status: response.status, model, error: errorText };
+				continue;
+			}
+
+			return null;
+		} catch (err) {
+			console.warn(`[Learning Engine] Z.ai ${model} failed:`, err);
+			lastError = err;
+			continue;
+		}
+	}
+
+	return null;
+}
+
+/**
+ * Call Gemini API with automatic fallback to secondary model
+ */
+async function callGeminiAPI(payload: any): Promise<any> {
+	let lastError: any = null;
+
+	for (const model of GEMINI_MODELS) {
+		try {
+			const response = await fetch(
+				`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+				{
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload)
+				}
+			);
+
+			if (response.ok) {
+				return await response.json();
+			}
+
+			if (response.status === 429) {
+				console.warn(`[Learning Engine] ${model} quota exceeded, trying fallback...`);
+				lastError = { status: response.status, model };
+				continue;
+			}
+
+			return null;
+		} catch (err) {
+			console.warn(`[Learning Engine] ${model} failed:`, err);
+			lastError = err;
+			continue;
+		}
+	}
+
+	return null;
+}
+
+/**
+ * Main AI API call function that respects AI_PROVIDER setting
+ * Returns JSON response or null if all models fail
+ */
+async function callAIAPI(payload: any): Promise<any> {
+	// Extract content from Gemini payload
+	const content = payload.contents?.[0]?.parts?.[0]?.text || '';
+	const temperature = payload.generationConfig?.temperature || 0.3;
+	const maxTokens = payload.generationConfig?.maxOutputTokens || 800;
+	const jsonResponse = payload.generationConfig?.responseMimeType === 'application/json';
+
+	// Determine which provider to use based on AI_PROVIDER env var
+	const useZaiPrimary = AI_PROVIDER === 'zai' && ZAI_API_KEY;
+	const useGeminiPrimary = AI_PROVIDER === 'gemini' && GEMINI_API_KEY;
+
+	console.log('[Learning Engine] AI config:', {
+		AI_PROVIDER,
+		hasZaiKey: !!ZAI_API_KEY,
+		hasGeminiKey: !!GEMINI_API_KEY,
+		primaryProvider: useZaiPrimary ? 'zai' : useGeminiPrimary ? 'gemini' : 'auto'
+	});
+
+	// If Z.ai is configured as primary
+	if (useZaiPrimary) {
+		console.log('[Learning Engine] Using Z.ai provider');
+		const result = await callZaiAPI(content, temperature, maxTokens, jsonResponse);
+		if (result) return result;
+
+		// Z.ai failed, try Gemini fallback
+		if (GEMINI_API_KEY) {
+			console.log('[Learning Engine] Z.ai failed, trying Gemini fallback...');
+			const fallbackResult = await callGeminiAPI(payload);
+			if (fallbackResult) return fallbackResult;
+		}
+
+		console.error('[Learning Engine] All AI providers failed');
+		return null;
+	}
+
+	// If Gemini is configured as primary (or default)
+	if (useGeminiPrimary || (!useZaiPrimary && !useGeminiPrimary)) {
+		// Try Gemini first
+		const geminiResult = await callGeminiAPI(payload);
+		if (geminiResult) return geminiResult;
+
+		// Gemini failed, try Z.ai fallback
+		if (ZAI_API_KEY) {
+			console.log('[Learning Engine] Gemini failed, trying Z.ai fallback...');
+			const fallbackResult = await callZaiAPI(content, temperature, maxTokens, jsonResponse);
+			if (fallbackResult) return fallbackResult;
+		}
+
+		console.error('[Learning Engine] All AI providers failed');
+		return null;
+	}
+
+	console.error('[Learning Engine] No AI provider configured (both keys missing)');
+	return null;
+}
 
 // ============================================
 // TYPES
@@ -135,7 +307,7 @@ export async function getUserRecentSessions(userId: string, limit = 10) {
     ORDER BY last_message_at DESC
     LIMIT ${limit}
   `);
-	return sessions.rows;
+	return sessions as unknown as { session_id: string; last_message_at: Date; message_count: number }[];
 }
 
 // ============================================
@@ -182,28 +354,20 @@ Rules:
 - Action items are concrete steps user agreed to take`;
 
 	try {
-		const response = await fetch(
-			`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_API_KEY}`,
-			{
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					contents: [{ role: 'user', parts: [{ text: prompt }] }],
-					generationConfig: {
-						temperature: 0.3,
-						maxOutputTokens: 500,
-						responseMimeType: 'application/json'
-					}
-				})
+		const data = await callAIAPI({
+			contents: [{ role: 'user', parts: [{ text: prompt }] }],
+			generationConfig: {
+				temperature: 0.3,
+				maxOutputTokens: 500,
+				responseMimeType: 'application/json'
 			}
-		);
+		});
 
-		if (!response.ok) {
-			console.error('Summary generation failed:', await response.text());
+		if (!data) {
+			console.error('Summary generation failed: All models unavailable');
 			return createFallbackSummary(params);
 		}
 
-		const data = await response.json();
 		const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
 
 		// Better JSON extraction
@@ -320,25 +484,17 @@ Rules:
 - If info conflicts with existing profile, use new info and increase confidence`;
 
 	try {
-		const response = await fetch(
-			`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_API_KEY}`,
-			{
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					contents: [{ role: 'user', parts: [{ text: prompt }] }],
-					generationConfig: {
-						temperature: 0.2,
-						maxOutputTokens: 800,
-						responseMimeType: 'application/json'
-					}
-				})
+		const data = await callAIAPI({
+			contents: [{ role: 'user', parts: [{ text: prompt }] }],
+			generationConfig: {
+				temperature: 0.2,
+				maxOutputTokens: 800,
+				responseMimeType: 'application/json'
 			}
-		);
+		});
 
-		if (!response.ok) return null;
+		if (!data) return null;
 
-		const data = await response.json();
 		const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
 
 		// Better JSON extraction - handle malformed JSON
@@ -563,7 +719,7 @@ export async function saveMemory(memory: Memory) {
 		title: memory.title,
 		description: memory.description,
 		importance: memory.importance,
-		date: memory.date,
+		date: memory.date.toISOString().split('T')[0], // Convert Date to string YYYY-MM-DD
 		data: memory.data || null
 	});
 }
@@ -615,25 +771,17 @@ Memory types:
 Only extract truly important information worth remembering long-term.`;
 
 	try {
-		const response = await fetch(
-			`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_API_KEY}`,
-			{
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					contents: [{ role: 'user', parts: [{ text: prompt }] }],
-					generationConfig: {
-						temperature: 0.2,
-						maxOutputTokens: 500,
-						responseMimeType: 'application/json'
-					}
-				})
+		const data = await callAIAPI({
+			contents: [{ role: 'user', parts: [{ text: prompt }] }],
+			generationConfig: {
+				temperature: 0.2,
+				maxOutputTokens: 500,
+				responseMimeType: 'application/json'
 			}
-		);
+		});
 
-		if (!response.ok) return [];
+		if (!data) return [];
 
-		const data = await response.json();
 		const aiText = data.candidates?.[0]?.content?.parts?.[0]?.text || '[]';
 
 		// Better JSON extraction - handle malformed JSON
@@ -697,7 +845,7 @@ export async function buildAIContext(userId: string): Promise<string> {
 		if (profile.primaryGoal) context += `- Primary Goal: ${profile.primaryGoal}\n`;
 		if (profile.spendingPersonality) context += `- Spending Style: ${profile.spendingPersonality}\n`;
 		if (profile.preferredLanguage) context += `- Language: ${profile.preferredLanguage}\n`;
-		if (profile.hasDebt) context += `- Has Debt: Yes (${profile.debtTypes?.join(', ') || 'various'})\n`;
+		if (profile.hasDebt) context += `- Has Debt: Yes (${(profile.debtTypes as string[] | null)?.join(', ') || 'various'})\n`;
 		context += `- Confidence: ${profile.confidence}%\n`;
 	}
 
@@ -774,30 +922,23 @@ async function summarizeQuestion(question: string): Promise<string> {
 	if (question.length <= 60) return question;
 
 	try {
-		const response = await fetch(
-			`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_API_KEY}`,
-			{
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					contents: [{
-						role: 'user',
-						parts: [{ text: `Shorten this question to max 50 characters. Keep it natural and conversational. Return ONLY the shortened question, no quotes, no explanation.
+		const data = await callAIAPI({
+			contents: [{
+				role: 'user',
+				parts: [{
+					text: `Shorten this question to max 50 characters. Keep it natural and conversational. Return ONLY the shortened question, no quotes, no explanation.
 
 Question: "${question}"
 
 Shortened (max 50 chars):` }]
-					}],
-					generationConfig: {
-						temperature: 0.3,
-						maxOutputTokens: 100
-					}
-				})
+			}],
+			generationConfig: {
+				temperature: 0.3,
+				maxOutputTokens: 100
 			}
-		);
+		});
 
-		if (response.ok) {
-			const data = await response.json();
+		if (data) {
 			const summarized = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || question;
 			// Remove quotes if AI added them
 			return summarized.replace(/^["']|["']$/g, '').substring(0, 60);
@@ -913,7 +1054,7 @@ export async function getSmartSuggestions(userProfile?: UserProfile | null, limi
 
 				// Investment boost for higher income or savings goals
 				if (qLower.includes('invest') || qLower.includes('saham')) {
-					const income = userProfile.monthlyIncome ? parseFloat(userProfile.monthlyIncome) : 0;
+					const income = userProfile.monthlyIncome ? parseFloat(String(userProfile.monthlyIncome)) : 0;
 					if (income > 5000) score += 5;
 				}
 
@@ -963,7 +1104,7 @@ export async function markQuestionHelpful(question: string) {
 		if (existing) {
 			await db
 				.update(aiPopularQuestions)
-				.set({ helpfulScore: existing.helpfulScore + 1 })
+				.set({ helpfulScore: (existing.helpfulScore || 0) + 1 })
 				.where(eq(aiPopularQuestions.id, existing.id));
 		}
 	} catch (error) {
@@ -994,7 +1135,7 @@ export async function getTrendingQuestions(limit = 10): Promise<
 			question: t.question,
 			category: t.category,
 			askCount: t.askCount,
-			helpfulScore: t.helpfulScore
+			helpfulScore: t.helpfulScore ?? 0
 		}));
 	} catch (error) {
 		console.error('Get trending error:', error);

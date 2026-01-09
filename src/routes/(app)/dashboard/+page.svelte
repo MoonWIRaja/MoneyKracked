@@ -29,6 +29,8 @@
   let spendingData: Array<{ name: string; value: number; percentage: number; color: string; formattedValue: string }> = $state([]);
   let remainingBudgetData = $state<{ value: number; formattedValue: string; percentage: number } | undefined>(undefined);
   let totalBudgetWithIncome = $state(0); // Total including income for chart display
+  let totalBudgetKPI = $state(0); // Total budget for KPI cards (including income)
+  let remainingBudgetKPI = $state(0); // Remaining budget for KPI cards (including income)
   let recentExpenses: Array<{
     id: string;
     payee: string;
@@ -39,10 +41,7 @@
     iconBg: string;
   }> = $state([]);
 
-  // Computed values from budgets
-  const totalBudget = $derived(budgets.reduce((sum, b) => sum + b.limitAmount, 0));
-  const totalSpent = $derived(budgets.reduce((sum, b) => sum + b.spent, 0));
-  const remainingBudget = $derived(totalBudget - totalSpent);
+  // Computed values from budgets (for overspent categories only)
   const overspentCategories = $derived(budgets.filter(b => b.spent > b.limitAmount).length);
   
   // Fetch preferences and budget data on mount
@@ -224,6 +223,10 @@
       // Store total with income for chart display
       totalBudgetWithIncome = calculatedTotalWithIncome;
 
+      // Set KPI values (include income for consistency with chart)
+      totalBudgetKPI = calculatedTotalWithIncome;
+      remainingBudgetKPI = totalRemainingAmount;
+
       remainingBudgetData = {
         value: totalRemainingAmount,
         formattedValue: curr.symbol + ' ' + new Intl.NumberFormat(curr.locale).format(totalRemainingAmount),
@@ -261,7 +264,7 @@
   }
   
   function formatAmount(amount: number): string {
-    if (amount === 0 && totalBudget === 0) return '-';
+    if (amount === 0 && totalBudgetKPI === 0) return '-';
     const curr = currencies[selectedCurrency];
     return curr.symbol + ' ' + new Intl.NumberFormat(curr.locale).format(amount);
   }
@@ -272,8 +275,8 @@
 </svelte:head>
 
 <!-- Page Header -->
-<Header 
-  title="Dashboard" 
+<Header
+  title="Dashboard"
   subtitle="Welcome back! Here's your financial overview."
 />
 
@@ -281,17 +284,17 @@
 <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
   <KPICard
     title="Total Budget (This Month)"
-    value={formatAmount(totalBudget)}
+    value={formatAmount(totalBudgetKPI)}
     icon="savings"
     iconColor="blue"
   />
-  
+
   <KPICard
     title="Remaining Budget"
-    value={formatAmount(remainingBudget)}
-    valueColor={remainingBudget >= 0 ? 'primary' : 'danger'}
+    value={formatAmount(remainingBudgetKPI)}
+    valueColor={remainingBudgetKPI >= 0 ? 'primary' : 'danger'}
     icon="account_balance"
-    iconColor={remainingBudget >= 0 ? 'green' : 'red'}
+    iconColor={remainingBudgetKPI >= 0 ? 'green' : 'red'}
   />
   
   <KPICard

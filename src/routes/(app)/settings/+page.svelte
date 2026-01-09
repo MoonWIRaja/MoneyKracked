@@ -27,6 +27,11 @@
   let uploadInProgress = $state(false);
   let showImageMenu = $state(false);
 
+  // Profile image removal confirmation
+  let showRemoveImageConfirm = $state(false);
+  let removingImage = $state(false);
+  let removeImageError = $state('');
+
   $effect.pre(() => {
     name = data.user?.name || '';
     profileImage = data.user?.image || null;
@@ -306,12 +311,14 @@
 
   async function removeImage() {
     if (!profileImage) return;
+    // Show confirmation modal instead of browser confirm
+    showRemoveImageConfirm = true;
+    showImageMenu = false;
+  }
 
-    if (!confirm('Are you sure you want to remove your profile image?')) {
-      return;
-    }
-
-    uploadInProgress = true;
+  async function confirmRemoveImage() {
+    removingImage = true;
+    removeImageError = '';
     try {
       const response = await fetch('/api/user/image', {
         method: 'DELETE',
@@ -325,16 +332,21 @@
         imagePreview = null;
         linkSuccess = 'Profile image removed successfully!';
         setTimeout(() => linkSuccess = '', 3000);
+        showRemoveImageConfirm = false;
       } else {
         throw new Error(result.error || 'Failed to remove image');
       }
     } catch (err: any) {
       console.error('[Settings] Image removal failed:', err);
-      alert(err.message || 'Failed to remove image. Please try again.');
+      removeImageError = err.message || 'Failed to remove image. Please try again.';
     } finally {
-      uploadInProgress = false;
-      showImageMenu = false;
+      removingImage = false;
     }
+  }
+
+  function cancelRemoveImage() {
+    showRemoveImageConfirm = false;
+    removeImageError = '';
   }
 
   function toggleImageMenu() {
@@ -1105,6 +1117,38 @@
               </div>
             </div>
           {/if}
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Remove Profile Image Confirmation Modal -->
+{#if showRemoveImageConfirm}
+  <div class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+    <div class="bg-surface-dark rounded-2xl border border-border-dark shadow-2xl max-w-sm w-full">
+      <div class="p-6 text-center">
+        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-danger/20 mb-4">
+          <span class="material-symbols-outlined text-danger text-2xl">delete</span>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-2">Remove Profile Photo?</h3>
+        <p class="text-text-secondary text-sm mb-6">
+          Are you sure you want to remove your profile image? This action cannot be undone.
+        </p>
+
+        {#if removeImageError}
+          <div class="mb-4 p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm">
+            {removeImageError}
+          </div>
+        {/if}
+
+        <div class="flex gap-3">
+          <Button variant="secondary" class="flex-1" onclick={cancelRemoveImage} disabled={removingImage}>
+            Cancel
+          </Button>
+          <Button variant="danger" class="flex-1" onclick={confirmRemoveImage} loading={removingImage}>
+            {removingImage ? 'Removing...' : 'Remove'}
+          </Button>
         </div>
       </div>
     </div>

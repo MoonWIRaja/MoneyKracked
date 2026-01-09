@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { budgets, categories } from '$lib/server/db/schema';
-import { eq, and, gte, lt, sql } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 
 // Get user ID helper
 async function getUserId(request: Request, cookies: any): Promise<string | null> {
@@ -39,20 +39,7 @@ export const GET: RequestHandler = async ({ request, cookies, url }) => {
     // Get month/year from query params (optional)
     const monthParam = url.searchParams.get('month');
     const yearParam = url.searchParams.get('year');
-    
-    let whereConditions = [eq(budgets.userId, userId)];
-    
-    // If month/year specified, filter by startDate
-    if (monthParam && yearParam) {
-      const month = parseInt(monthParam);
-      const year = parseInt(yearParam);
-      const startOfMonth = new Date(year, month - 1, 1);
-      const endOfMonth = new Date(year, month, 0); // Last day of month
-      
-      // Filter budgets that have startDate in this month or have no startDate (global budgets)
-      // For now, we'll just get budgets with matching startDate or null startDate
-    }
-    
+
     // Get budgets with category info
     const userBudgets = await db.query.budgets.findMany({
       where: eq(budgets.userId, userId),
@@ -100,6 +87,7 @@ export const GET: RequestHandler = async ({ request, cookies, url }) => {
  * POST - Create new budget(s)
  * Can accept single or batch creation
  * Supports month/year for date-specific budgets
+ * Supports clearExisting option to remove all budgets for a specific month/year before creating new ones
  */
 export const POST: RequestHandler = async ({ request, cookies }) => {
   try {
@@ -107,12 +95,59 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     if (!userId) {
       return json({ error: 'Not authenticated' }, { status: 401 });
     }
-    
+
     const body = await request.json();
-    
+
     // Support both single and batch creation
     const budgetItems = Array.isArray(body.budgets) ? body.budgets : [body];
-    
+    const clearExisting = body.clearExisting === true; // Option to clear existing budgets first
+
+    // DEBUG: Log incoming request
+    console.log(`[Budgets] POST request: clearExisting=${clearExisting}, items=${budgetItems.length}`,
+      budgetItems.map((item: any) => ({
+        categoryName: item.categoryName,
+        amount: item.amount,
+        month: item.month,
+        year: item.year
+      }))
+    );
+
+    // If clearExisting is true and we have month/year info, delete all budgets for that period first
+    if (clearExisting && budgetItems.length > 0) {
+      const firstItem = budgetItems[0];
+      const { month, year } = firstItem;
+
+      if (month && year) {
+        const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+
+        // DEBUG: Log what we're about to delete
+        const existingBudgets = await db.query.budgets.findMany({
+          where: eq(budgets.userId, userId)
+        });
+        console.log(`[Budgets] Before delete - User has ${existingBudgets.length} budgets:`,
+          existingBudgets.map(b => ({
+            id: b.id,
+            categoryId: b.categoryId,
+            limitAmount: b.limitAmount,
+            startDate: b.startDate
+          }))
+        );
+
+        // Delete all budgets for this month/year ONLY
+        await db.delete(budgets)
+          .where(and(
+            eq(budgets.userId, userId),
+            eq(budgets.startDate, startDate)
+          ));
+
+        console.log(`[Budgets] Cleared ${month}/${year} (startDate: ${startDate}) budgets before creating new ones`);
+      } else {
+        // CRITICAL: If no month/year specified but clearExisting is true, we should NOT delete anything!
+        // This prevents accidentally deleting all budgets when creating global budgets
+        console.warn(`[Budgets] clearExisting=true but no month/year provided. Skipping delete to prevent data loss.`);
+      }
+    }
+
     const createdBudgets = [];
     
     for (const item of budgetItems) {
@@ -164,9 +199,12 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
       let endDate = null;
       if (month && year) {
         startDate = `${year}-${String(month).padStart(2, '0')}-01`;
-        // Last day of month
+        // Last day of month (note: month in Date constructor is 0-indexed, so we use month directly to get the 0th of next month = last day of current month)
         const lastDay = new Date(year, month, 0).getDate();
         endDate = `${year}-${String(month).padStart(2, '0')}-${lastDay}`;
+        console.log(`[Budgets] Creating budget for ${categoryName}: month=${month}, year=${year}, startDate=${startDate}`);
+      } else {
+        console.log(`[Budgets] Creating budget for ${categoryName}: NO month/year provided (global budget, startDate=null)`);
       }
       
       // Check if budget already exists for this category in this period

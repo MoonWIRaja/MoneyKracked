@@ -8,6 +8,8 @@
     categoryName: string;
     amount: number;
     period: 'monthly' | 'weekly' | 'yearly';
+    month?: number; // 1-12, optional
+    year?: number; // e.g., 2026, optional
   }
 
   interface Message {
@@ -16,6 +18,16 @@
     content: string;
     timestamp: Date;
     budgetActions?: BudgetAction[];
+  }
+
+  interface ChatSession {
+    sessionId: string;
+    title: string;
+    summary: string;
+    lastMessageAt: Date;
+    messageCount: number;
+    topics: string[];
+    sentiment?: string;
   }
 
   let messages = $state<Message[]>([
@@ -36,6 +48,12 @@
   let suggestions = $state<string[]>([]);
   let isLoadingSuggestions = $state(true);
 
+  // Chat history sidebar
+  let chatSessions = $state<ChatSession[]>([]);
+  let isLoadingSessions = $state(false);
+  let showSidebar = $state(true);
+  let selectedSessionId = $state<string | null>(null);
+
   // Default suggestions while loading
   const defaultSuggestions = [
     "Setup my budget, salary RM4500",
@@ -47,6 +65,7 @@
   // Load smart suggestions on mount
   onMount(async () => {
     await loadSuggestions();
+    await loadChatHistory();
   });
 
   async function loadSuggestions() {
@@ -67,6 +86,76 @@
     } finally {
       isLoadingSuggestions = false;
     }
+  }
+
+  async function loadChatHistory() {
+    isLoadingSessions = true;
+    try {
+      const response = await fetch('/api/ai-chat?type=sessions', {
+        credentials: 'include'
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.sessions && Array.isArray(data.sessions)) {
+          chatSessions = data.sessions.map((s: any) => ({
+            sessionId: s.sessionId,
+            title: s.title,
+            summary: s.summary,
+            lastMessageAt: new Date(s.lastMessageAt),
+            messageCount: s.messageCount || 0,
+            topics: s.topics || [],
+            sentiment: s.sentiment
+          }));
+        }
+      }
+    } catch (err) {
+      console.error('Load chat history error:', err);
+    } finally {
+      isLoadingSessions = false;
+    }
+  }
+
+  async function loadSessionMessages(sessionId: string) {
+    try {
+      const response = await fetch(`/api/ai-chat?type=messages&sessionId=${sessionId}`, {
+        credentials: 'include'
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.messages && Array.isArray(data.messages)) {
+          // Convert to Message format - messages come in descending order, so reverse
+          const loadedMessages = data.messages.reverse().map((m: any) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            timestamp: new Date(m.createdAt),
+            budgetActions: m.metadata?.budgetActions
+          }));
+          messages = loadedMessages;
+          selectedSessionId = sessionId;
+          // Scroll to bottom
+          setTimeout(() => {
+            const container = document.querySelector('[data-chat-container]');
+            if (container) container.scrollTop = container.scrollHeight;
+          }, 100);
+        }
+      }
+    } catch (err) {
+      console.error('Load session error:', err);
+    }
+  }
+
+  function startNewChat() {
+    messages = [{
+      id: '1',
+      role: 'assistant',
+      content: "Hi! I'm **MonKrac** 🤖\n\nYour expert Financial Coach & Budget Advisor specializing in Malaysian personal finance.\n\nI have a **memory** and I **learn** from our conversations! The more we talk, the better I can help you.\n\nI can help you with:\n• **Setup your budget** - Tell me your salary and I'll create a personalized budget plan\n• **Analyze spending** - I'll review all your transactions and give smart tips\n• **Savings strategies** - Build emergency funds and achieve your financial goals\n• **Debt management** - Get advice on managing loans, credit cards, and PTPTN\n\nTry saying: \"Setup my budget, salary RM4500\" or \"Analyze my spending\"",
+      timestamp: new Date()
+    }];
+    sessionId = crypto.randomUUID();
+    selectedSessionId = null;
+    pendingActions = null;
+    learnedInfo = null;
   }
 
   async function sendMessage() {
@@ -108,6 +197,7 @@
       // Update session ID for continuity
       if (data.sessionId) {
         sessionId = data.sessionId;
+        selectedSessionId = data.sessionId;
       }
 
       // Show what AI learned
@@ -124,6 +214,7 @@
 
       // If there are budget actions, show pending
       if (data.budgetActions && data.budgetActions.length > 0) {
+        console.log('[Coach] AI returned budget actions:', data.budgetActions);
         pendingActions = data.budgetActions;
       }
 
@@ -140,6 +231,8 @@
       isLoading = false;
       // Refresh suggestions after each message (they update based on popularity)
       loadSuggestions();
+      // Refresh chat history to show latest session
+      loadChatHistory();
     }
   }
 
@@ -149,6 +242,13 @@
     applyingBudgets = true;
 
     try {
+      console.log('[Coach] Applying budgets:', pendingActions.map(a => ({
+        categoryName: a.categoryName,
+        amount: a.amount,
+        month: a.month,
+        year: a.year
+      })));
+
       const response = await fetch('/api/budgets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -157,8 +257,11 @@
           budgets: pendingActions.map(a => ({
             categoryName: a.categoryName,
             amount: a.amount,
-            period: a.period
-          }))
+            period: a.period,
+            month: a.month,
+            year: a.year
+          })),
+          clearExisting: true // Clear existing budgets for this month/year before creating new ones
         })
       });
 
@@ -211,6 +314,22 @@
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   }
 
+  function formatSessionDate(date: Date): string {
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+    if (days === 0) {
+      return 'Today';
+    } else if (days === 1) {
+      return 'Yesterday';
+    } else if (days < 7) {
+      return date.toLocaleDateString('en-US', { weekday: 'short' });
+    } else {
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+  }
+
   function formatAmount(amount: number): string {
     return 'RM ' + amount.toLocaleString();
   }
@@ -226,10 +345,12 @@
   subtitle="Your expert financial advisor powered by AI"
 />
 
-<div class="flex flex-col h-[calc(100vh-220px)] lg:h-[calc(100vh-180px)]">
-  <!-- Chat Messages -->
-  <Card padding="none" class="flex-1 overflow-hidden flex flex-col">
-    <div class="flex-1 overflow-y-auto p-4 space-y-4">
+<div class="flex gap-4 h-[calc(100vh-220px)] lg:h-[calc(100vh-180px)]">
+  <!-- Main Chat Area -->
+  <div class="flex-1 flex flex-col min-w-0">
+    <!-- Chat Messages -->
+    <Card padding="none" class="flex-1 overflow-hidden flex flex-col">
+      <div class="flex-1 overflow-y-auto p-4 space-y-4" data-chat-container>
       {#each messages as message}
         <div class="flex {message.role === 'user' ? 'justify-end' : 'justify-start'}">
           <div class="flex items-start gap-3 max-w-[85%]">
@@ -353,4 +474,61 @@
       </form>
     </div>
   </Card>
+  </div>
+
+  <!-- Chat History Sidebar -->
+  <div class="w-72 flex-shrink-0">
+    <Card padding="none" class="h-full flex flex-col">
+      <!-- Sidebar Header -->
+      <div class="p-4 border-b border-border-dark">
+        <button
+          onclick={startNewChat}
+          class="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-white font-medium hover:bg-primary-hover transition-colors"
+        >
+          <span class="material-symbols-outlined text-lg">add</span>
+          New Chat
+        </button>
+      </div>
+
+      <!-- Sessions List -->
+      <div class="flex-1 overflow-y-auto p-2">
+        {#if isLoadingSessions}
+          <div class="flex items-center justify-center py-8">
+            <div class="inline-block animate-spin rounded-full h-6 w-6 border-2 border-primary border-t-transparent"></div>
+          </div>
+        {:else if chatSessions.length === 0}
+          <div class="text-center py-8 px-4">
+            <span class="material-symbols-outlined text-4xl text-text-muted mb-2">history</span>
+            <p class="text-sm text-text-muted">No chat history yet</p>
+            <p class="text-xs text-text-muted mt-1">Start a conversation to see it here</p>
+          </div>
+        {:else}
+          <div class="space-y-1">
+            {#each chatSessions as session}
+              <button
+                onclick={() => loadSessionMessages(session.sessionId)}
+                class="w-full text-left p-3 rounded-lg hover:bg-surface-dark transition-colors {selectedSessionId === session.sessionId ? 'bg-surface-dark border border-primary/30' : ''}"
+              >
+                <div class="flex items-start gap-2">
+                  <span class="material-symbols-outlined text-lg text-text-secondary flex-shrink-0 mt-0.5">
+                    {session.sentiment === 'positive' ? 'sentiment_satisfied' :
+                     session.sentiment === 'stressed' ? 'sentiment_stressed' :
+                     session.sentiment === 'negative' ? 'sentiment_dissatisfied' :
+                     'chat_bubble'}
+                  </span>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium text-white truncate">{session.title}</p>
+                    <p class="text-xs text-text-muted truncate">{session.summary}</p>
+                    <p class="text-xs text-text-muted mt-1">
+                      {formatSessionDate(session.lastMessageAt)}
+                    </p>
+                  </div>
+                </div>
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </Card>
+  </div>
 </div>

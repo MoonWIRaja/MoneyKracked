@@ -3,19 +3,195 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { budgets, categories, transactions, user, goals, financialAccounts } from '$lib/server/db/schema';
 import { eq, and, gte, desc } from 'drizzle-orm';
-import { GEMINI_API_KEY } from '$env/static/private';
+import { GEMINI_API_KEY, ZAI_API_KEY, AI_PROVIDER } from '$env/static/private';
 import * as AI from '$lib/server/ai/learning-engine';
 
 /**
  * AI Chat endpoint for MonKrac - Expert Financial Coach with Thinking Machine.
  * Now with memory, learning, and insights!
+ * Supports Gemini (Google) and Z.ai (GLM models) as AI providers.
  */
+
+// ============================================
+// GEMINI API (Google)
+// ============================================
+
+// Model preference: try gemini models in order
+const GEMINI_MODELS = [
+	'gemini-3-flash-preview',  // Primary - newest model, best quality
+	'gemini-2.5-flash'         // Fallback - latest flash model
+];
+
+/**
+ * Call Gemini API with automatic fallback to secondary model
+ */
+async function callGeminiAPI(payload: any): Promise<{ response: Response; modelName: string }> {
+	let lastError: any = null;
+
+	for (const model of GEMINI_MODELS) {
+		try {
+			const response = await fetch(
+				`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+				{
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(payload)
+				}
+			);
+
+			// If successful, return response
+			if (response.ok) {
+				console.log(`[AI Chat] Using Gemini model: ${model}`);
+				return { response, modelName: model };
+			}
+
+			// If rate limit (429), try next model
+			if (response.status === 429) {
+				const errorText = await response.text();
+				console.warn(`[AI Chat] ${model} quota exceeded, trying fallback...`);
+				lastError = { status: response.status, text: errorText, model };
+				continue; // Try next model
+			}
+
+			// Other errors - don't retry
+			return { response, modelName: model };
+		} catch (err) {
+			console.warn(`[AI Chat] ${model} failed:`, err);
+			lastError = err;
+			continue;
+		}
+	}
+
+	// All models failed - throw last error
+	throw lastError || new Error('All Gemini models failed');
+}
+
+// ============================================
+// Z.AI API (GLM Models)
+// ============================================
+
+// Z.ai GLM models - similar to Gemini but different API
+// Correct models from Z.ai docs: https://docs.z.ai/guides/llm/glm-4.7
+const ZAI_MODELS = [
+	'glm-4.7'         // Only use glm-4.7 as per user request
+];
+
+/**
+ * Call Z.ai API with automatic fallback to secondary model
+ */
+async function callZaiAPI(payload: any): Promise<{ response: Response; modelName: string }> {
+	let lastError: any = null;
+
+	// Use imported ZAI_API_KEY from $env/static/private
+
+	for (const model of ZAI_MODELS) {
+		try {
+			// Z.ai uses OpenAI-compatible API format
+			// For GLM Coding Plan, use /api/coding/paas/v4 endpoint
+			const response = await fetch('https://api.z.ai/api/coding/paas/v4/chat/completions', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'Authorization': `Bearer ${ZAI_API_KEY}`
+				},
+				body: JSON.stringify({
+					model: model,
+					messages: payload.messages || [{ role: 'user', content: payload.content }],
+					temperature: payload.temperature || 0.8,
+					max_tokens: payload.max_tokens || 8192,
+					response_format: { type: 'json_object' }
+				})
+			});
+
+			// If successful, return response
+			if (response.ok) {
+				console.log(`[AI Chat] Using Z.ai model: ${model}`);
+				return { response, modelName: model };
+			}
+
+			// Clone response before reading to avoid "Body already read" error
+			const responseClone = response.clone();
+			const errorText = await responseClone.text();
+			console.error(`[AI Chat] Z.ai ${model} error:`, response.status, errorText);
+
+			// If rate limit (429) or auth error (401), try next model
+			if (response.status === 429 || response.status === 401) {
+				console.warn(`[AI Chat] ${model} ${response.status === 401 ? 'auth failed' : 'quota exceeded'}, trying fallback...`);
+				lastError = { status: response.status, text: errorText, model };
+				continue; // Try next model
+			}
+
+			// Other errors - return with cloned response for caller to handle
+			return { response: response.clone(), modelName: model };
+		} catch (err) {
+			console.warn(`[AI Chat] ${model} failed:`, err);
+			lastError = err;
+			continue;
+		}
+	}
+
+	// All models failed - throw last error
+	throw lastError || new Error('All Z.ai models failed');
+}
+
+// ============================================
+// SHARED TYPES & UTILITIES
+// ============================================
 
 interface BudgetAction {
 	action: 'create' | 'update' | 'delete';
 	categoryName: string;
 	amount: number;
 	period: 'monthly' | 'weekly' | 'yearly';
+	month?: number; // 1-12, optional - for specific month budgets
+	year?: number; // e.g., 2026, optional - for specific year budgets
+}
+
+/**
+ * Extract month and year from user message
+ * Returns current date if no specific date mentioned
+ */
+function extractMonthYear(message: string): { month: number; year: number } {
+	const now = new Date();
+	let month = now.getMonth() + 1; // 1-12
+	let year = now.getFullYear();
+
+	const lowerMessage = message.toLowerCase();
+
+	// Malay month names
+	const malayMonths = ['jan', 'feb', 'mac', 'apr', 'mei', 'jun', 'jul', 'ogos', 'sep', 'okt', 'nov', 'dis'];
+	// English month names
+	const englishMonths = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+	// Check for month names
+	for (let i = 0; i < 12; i++) {
+		if (lowerMessage.includes(malayMonths[i]) || lowerMessage.includes(englishMonths[i])) {
+			month = i + 1;
+			break;
+		}
+	}
+
+	// Check for "bulan" (month) with number - e.g., "bulan 2"
+	const bulanMatch = lowerMessage.match(/bulan\s*(\d{1,2})/);
+	if (bulanMatch) {
+		month = parseInt(bulanMatch[1]);
+		if (month > 12) month = 12;
+		if (month < 1) month = 1;
+	}
+
+	// Check for year - e.g., "tahun 2026" or just "2026"
+	const yearMatch = message.match(/20[2-9]\d/); // Matches 2020-2099
+	if (yearMatch) {
+		year = parseInt(yearMatch[0]);
+	}
+
+	// Also check for "tahun" prefix
+	const tahunMatch = lowerMessage.match(/tahun\s*(20[2-9]\d)/);
+	if (tahunMatch) {
+		year = parseInt(tahunMatch[1]);
+	}
+
+	return { month, year };
 }
 
 interface ChatResponse {
@@ -23,6 +199,7 @@ interface ChatResponse {
 	budgetActions?: BudgetAction[];
 	sessionId?: string;
 	learnedProfile?: any;
+	aiProvider?: string;
 }
 
 // Get user ID and name from session
@@ -229,7 +406,7 @@ async function getUserContext(userId: string): Promise<string> {
 }
 
 // System prompt for MonKrac - Expert Financial Coach with Memory
-function getSystemPrompt(userName: string | null, learnedContext: string): string {
+function getSystemPrompt(userName: string | null, learnedContext: string, targetMonth?: number, targetYear?: number): string {
 	const greeting = userName ? `Hi ${userName}!` : 'Hello!';
 	const nameOrFriend = userName ? userName : 'friend';
 
@@ -238,6 +415,8 @@ function getSystemPrompt(userName: string | null, learnedContext: string): strin
 YOU HAVE A MEMORY AND LEARNING CAPABILITY - You remember past conversations and have learned about this user!
 
 ${learnedContext}
+
+${targetMonth ? `⚠️⚠️⚠️ CRITICAL: User is asking for budget for MONTH ${targetMonth}, YEAR ${targetYear}. You MUST include "month": ${targetMonth} and "year": ${targetYear} in EVERY budgetAction item. DO NOT omit these fields!⚠️⚠️⚠️` : ''}
 
 YOUR IDENTITY:
 - Name: MonKrac
@@ -285,6 +464,8 @@ IMPORTANT - DATE & TIMEZONE:
 - When user mentions "tahun 2026", they mean ONLY year 2026, not other years
 - Budget period "monthly" means recurring every month, NOT all-time total
 - Always clarify what time period the budget is for if user specifies a month/year
+${targetMonth ? `- User is asking for budget specifically for MONTH: ${targetMonth}, YEAR: ${targetYear}` : ''}
+${targetMonth ? `- You MUST include "month": ${targetMonth} and "year": ${targetYear} in ALL budgetActions` : ''}
 
 CRITICAL RESPONSE FORMAT:
 You MUST ALWAYS respond with ONLY valid JSON. No other text before or after the JSON.
@@ -312,8 +493,8 @@ WHEN TO NOT INCLUDE budgetActions:
 
 BUDGET ACTION FORMAT:
 "budgetActions": [
-  {"action": "create", "categoryName": "Savings", "amount": 600, "period": "monthly"},
-  {"action": "create", "categoryName": "Food & Dining", "amount": 450, "period": "monthly"}
+  {"action": "create", "categoryName": "Savings", "amount": 600, "period": "monthly"${targetMonth ? `, "month": ${targetMonth}, "year": ${targetYear}` : ''}},
+  {"action": "create", "categoryName": "Food & Dining", "amount": 450, "period": "monthly"${targetMonth ? `, "month": ${targetMonth}, "year": ${targetYear}` : ''}}
 ]
 
 CRITICAL BUDGET RULES:
@@ -321,9 +502,11 @@ CRITICAL BUDGET RULES:
 - The "amount" is the MONTHLY LIMIT, not a total for all time
 - When user asks for "bulan 2 2026 budget", create a MONTHLY budget plan that applies to that month
 - Do NOT multiply amounts by 12 or calculate yearly totals unless specifically asked
-- If user specifies a month (e.g., "February 2026"), acknowledge it in your message but keep period as "monthly"
+- If user specifies a month (e.g., "February 2026"), acknowledge it in your message AND include "month" and "year" in budgetActions
+- The "month" and "year" fields in budgetActions tell the system which month this budget is for
+${targetMonth ? `- ⚠️ CRITICAL: ALL budgetActions MUST include "month": ${targetMonth} and "year": ${targetYear} - DO NOT FORGET!` : ''}
 
-EXAMPLE - User says "gaji saya RM2500":
+EXAMPLE - User says "gaji saya RM2500" (NO specific month):
 {
   "message": "${greeting} dengan gaji RM2,500, MonKrac cadangkan budget macam ni:\\n\\n💰 **Savings (20%)**: RM500\\n🍽️ **Food & Dining (20%)**: RM500\\n🚗 **Transport (15%)**: RM375\\n💡 **Utilities (10%)**: RM250\\n🏠 **Rent/Housing (25%)**: RM625\\n🎉 **Entertainment (10%)**: RM250\\n\\nTotal: RM2,500\\n\\nBudget ni ikut 50/30/20 rule. Klik Apply kalau setuju!",
   "budgetActions": [
@@ -340,12 +523,12 @@ EXAMPLE - User says "setup budget bulan 2 tahun 2026 gaji RM3000":
 {
   "message": "${greeting} untuk bulan Februari 2026 dengan gaji RM3,000, MonKrac cadangkan budget bulanan macam ni:\\n\\n💰 **Savings (20%)**: RM600\\n🍽️ **Food & Dining (20%)**: RM600\\n🚗 **Transport (15%)**: RM450\\n💡 **Utilities (10%)**: RM300\\n🏠 **Rent/Housing (25%)**: RM750\\n🎉 **Entertainment (10%)**: RM300\\n\\nTotal: RM3,000 sebulan\\n\\nBudget ni untuk bulan Februari 2026. Budget berulang setiap bulan. Klik Apply kalau setuju!",
   "budgetActions": [
-    {"action": "create", "categoryName": "Savings", "amount": 600, "period": "monthly"},
-    {"action": "create", "categoryName": "Food & Dining", "amount": 600, "period": "monthly"},
-    {"action": "create", "categoryName": "Transportation", "amount": 450, "period": "monthly"},
-    {"action": "create", "categoryName": "Utilities", "amount": 300, "period": "monthly"},
-    {"action": "create", "categoryName": "Housing", "amount": 750, "period": "monthly"},
-    {"action": "create", "categoryName": "Entertainment", "amount": 300, "period": "monthly"}
+    {"action": "create", "categoryName": "Savings", "amount": 600, "period": "monthly", "month": 2, "year": 2026},
+    {"action": "create", "categoryName": "Food & Dining", "amount": 600, "period": "monthly", "month": 2, "year": 2026},
+    {"action": "create", "categoryName": "Transportation", "amount": 450, "period": "monthly", "month": 2, "year": 2026},
+    {"action": "create", "categoryName": "Utilities", "amount": 300, "period": "monthly", "month": 2, "year": 2026},
+    {"action": "create", "categoryName": "Housing", "amount": 750, "period": "monthly", "month": 2, "year": 2026},
+    {"action": "create", "categoryName": "Entertainment", "amount": 300, "period": "monthly", "month": 2, "year": 2026}
   ]
 }
 
@@ -370,10 +553,16 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     const body = await request.json();
     const userMessage = body.message;
     const sessionId = body.sessionId || crypto.randomUUID();
+	  // Allow user to override AI provider (optional)
+	  const requestedProvider = body.provider; // 'gemini' or 'zai' or undefined (auto)
 
     if (!userMessage || typeof userMessage !== 'string') {
       return json({ error: 'Message is required' }, { status: 400 });
     }
+
+	  // === EXTRACT TARGET MONTH/YEAR FROM USER MESSAGE ===
+	  const { month: targetMonth, year: targetYear } = extractMonthYear(userMessage);
+	  console.log(`[AI Chat] Extracted target: month=${targetMonth}, year=${targetYear}`);
 
     // === MONKRAC THINKING MACHINE: MEMORY & LEARNING ===
 
@@ -394,80 +583,168 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     // 3. Get user's current financial data
     const financialContext = await getUserContext(userId);
 
-    // 4. Get personalized system prompt with memory
-    const systemPrompt = getSystemPrompt(userName, learnedContext);
+	  // 4. Get personalized system prompt with memory AND target month/year
+	  const systemPrompt = getSystemPrompt(userName, learnedContext, targetMonth, targetYear);
 
-    // 5. Call Gemini API
-    const geminiResponse = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: `${systemPrompt}\n\n${financialContext}\n\nUser Message: ${userMessage}` }]
-            }
-          ],
-          generationConfig: {
-            temperature: 0.8,
-            maxOutputTokens: 8192,
-            responseMimeType: 'application/json'
-          }
-        })
-      }
-    );
+	  // 5. Determine which AI provider to use
+	  // Note: ZAI_API_KEY, AI_PROVIDER, GEMINI_API_KEY are imported from $env/static/private
 
-    if (!geminiResponse.ok) {
-      const errorData = await geminiResponse.text();
-      console.error('Gemini API error:', errorData);
+	  // Debug logging
+	  console.log('[AI Chat] Provider config:', {
+		  AI_PROVIDER,
+		  hasZaiKey: !!ZAI_API_KEY,
+		  hasGeminiKey: !!GEMINI_API_KEY,
+		  requestedProvider
+	  });
 
-      // Check for rate limit error
-      if (geminiResponse.status === 429) {
-        let retryMessage = "API quota exceeded. Please wait about 1 minute and try again.";
-        try {
-          const errorJson = JSON.parse(errorData);
-          const retryInfo = errorJson.error?.details?.find((d: any) => d['@type']?.includes('RetryInfo'));
-          if (retryInfo?.retryDelay) {
-            retryMessage = `API quota exceeded. Please wait ${retryInfo.retryDelay} and try again.`;
-          }
-        } catch {}
+	  // Determine which provider to use:
+	  // 1. If explicitly requested, use that (if key available)
+	  // 2. If AI_PROVIDER is set, use that (if key available)
+	  // 3. Otherwise, prefer Gemini (if available), then Z.ai
+	  let useZai = false;
 
-        return json({
-          message: `⏳ ${retryMessage}\n\nThe free Gemini AI has usage limits. You can:\n1. Wait a minute and try again\n2. Use manual budget setup instead`,
-          error: 'rate_limit',
-          sessionId
-        }, { status: 429 });
-      }
+	  if (requestedProvider === 'zai' && ZAI_API_KEY) {
+		  useZai = true;
+	  } else if (requestedProvider === 'gemini' && GEMINI_API_KEY) {
+		  useZai = false;
+	  } else if (!requestedProvider) {
+		  // No explicit request - use configured provider
+		  if (AI_PROVIDER === 'zai' && ZAI_API_KEY) {
+			  useZai = true;
+		  } else if (AI_PROVIDER === 'gemini' && GEMINI_API_KEY) {
+			  useZai = false;
+		  } else {
+			  // Fallback: use whatever key is available
+			  useZai = !GEMINI_API_KEY && !!ZAI_API_KEY;
+		  }
+	  }
 
-      return json({
-        message: "I'm having trouble connecting right now. Please try again later.",
-        error: 'AI service unavailable',
-        sessionId
-      }, { status: 500 });
+	  console.log('[AI Chat] Using', useZai ? 'Z.ai' : 'Gemini', 'provider');
+
+	  let aiResponse: Response;
+	  let aiProvider: string;
+	  let aiText: string;
+
+	  if (useZai) {
+		  // === Z.AI API CALL ===
+
+		  const fullPrompt = `${systemPrompt}\n\n${financialContext}\n\nUser Message: ${userMessage}`;
+
+		  try {
+			  ({ response: aiResponse } = await callZaiAPI({
+				  messages: [{ role: 'user', content: fullPrompt }],
+				  temperature: 0.8,
+				  max_tokens: 8192
+			  }));
+			  aiProvider = 'zai';
+
+			  const zaiData = await aiResponse.json();
+			  aiText = zaiData.choices?.[0]?.message?.content || '';
+			  console.log('Z.ai raw response length:', aiText.length);
+
+		  } catch (err: any) {
+			  console.error('Z.ai API error:', err);
+
+			  // Try Gemini fallback if available
+			  if (GEMINI_API_KEY) {
+				  console.log('[AI Chat] Z.ai failed completely, trying Gemini fallback...');
+				  try {
+					  const fallbackPayload = {
+						  contents: [
+							  {
+								  role: 'user',
+								  parts: [{ text: fullPrompt }]
+							  }
+						  ],
+						  generationConfig: {
+							  temperature: 0.8,
+							  maxOutputTokens: 8192,
+							  responseMimeType: 'application/json'
+						  }
+					  };
+					  const { response: fallbackResponse } = await callGeminiAPI(fallbackPayload);
+					  aiResponse = fallbackResponse;
+					  aiProvider = 'gemini';
+					  const geminiData = await aiResponse.json();
+					  aiText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+					  console.log('[AI Chat] Gemini fallback success, response length:', aiText.length);
+				  } catch (fallbackErr) {
+					  console.error('Gemini fallback also failed:', fallbackErr);
+					  return json({
+						  message: "I'm having trouble connecting to all AI services right now. Please try again later.",
+						  error: 'All AI services unavailable',
+						  sessionId
+					  }, { status: 500 });
+				  }
+			  } else {
+				  return json({
+					  message: "I'm having trouble connecting right now. Please try again later.",
+					  error: 'Z.ai service unavailable',
+					  sessionId
+				  }, { status: 500 });
+			  }
+		  }
+	  } else {
+		  // === GEMINI API CALL ===
+		  const requestPayload = {
+			  contents: [
+				  {
+					  role: 'user',
+					  parts: [{ text: `${systemPrompt}\n\n${financialContext}\n\nUser Message: ${userMessage}` }]
+				  }
+			  ],
+			  generationConfig: {
+				  temperature: 0.8,
+				  maxOutputTokens: 8192,
+				  responseMimeType: 'application/json'
+			  }
+		  };
+
+		  try {
+			  ({ response: aiResponse } = await callGeminiAPI(requestPayload));
+			  aiProvider = 'gemini';
+
+			  const geminiData = await aiResponse.json();
+			  aiText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+			  console.log('Gemini raw response length:', aiText.length);
+
+			  // Check if response was truncated
+			  const isTruncated = aiText.length > 0 && !aiText.trim().endsWith('}') && !aiText.trim().endsWith(']');
+			  if (isTruncated) {
+				  console.warn('⚠️ AI response appears truncated! Raw end:', aiText.slice(-200));
+			  }
+
+		  } catch (err: any) {
+			  console.error('Gemini API error:', err);
+
+			  // Check if it's a rate limit error
+			  if (err?.status === 429) {
+				  let retryMessage = "API quota exceeded for all models. Please wait and try again.";
+				  try {
+					  const errorJson = JSON.parse(err.text);
+					  const retryInfo = errorJson.error?.details?.find((d: any) => d['@type']?.includes('RetryInfo'));
+					  if (retryInfo?.retryDelay) {
+						  retryMessage = `API quota exceeded. Please wait ${retryInfo.retryDelay} and try again.`;
+					  }
+				  } catch { }
+
+				  return json({
+					message: `⏳ ${retryMessage}\n\nThe free Gemini AI has usage limits. You can:\n1. Wait a bit and try again\n2. Use manual budget setup instead`,
+					error: 'rate_limit',
+					sessionId
+				}, { status: 429 });
+			  }
+
+			  return json({
+				  message: "I'm having trouble connecting right now. Please try again later.",
+				  error: 'AI service unavailable',
+				  sessionId
+			  }, { status: 500 });
+		  }
     }
 
-    const geminiData = await geminiResponse.json();
-    const aiText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-    console.log('Gemini raw response length:', aiText.length);
-    console.log('Gemini raw response:', aiText.substring(0, 500) + (aiText.length > 500 ? '...' : ''));
-
-    // Check if response was truncated (ends abruptly without closing brace)
-    const isTruncated = aiText.length > 0 && !aiText.trim().endsWith('}') && !aiText.trim().endsWith(']');
-    if (isTruncated) {
-      console.warn('⚠️ AI response appears truncated! Raw end:', aiText.slice(-200));
-    }
-
-    // Check for finish reason - if not STOP, response might be incomplete
-    const finishReason = geminiData.candidates?.[0]?.finishReason;
-    console.log('Finish reason:', finishReason);
-    if (finishReason && finishReason !== 'STOP') {
-      console.warn('⚠️ AI response did not complete normally. Finish reason:', finishReason);
-    }
+	  console.log(`[AI Chat] Raw response (${aiProvider}):`, aiText.substring(0, 500) + (aiText.length > 500 ? '...' : ''));
 
     // Parse JSON response
     let response: ChatResponse;
@@ -479,6 +756,17 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
       } else {
         // Fallback if no JSON found
         response = { message: aiText };
+      }
+
+      // Debug: Log budgetActions if present
+      if (response.budgetActions && response.budgetActions.length > 0) {
+        console.log('[AI Chat] Parsed budgetActions:', response.budgetActions.map((a: any) => ({
+          action: a.action,
+          categoryName: a.categoryName,
+          amount: a.amount,
+          month: a.month,
+          year: a.year
+        })));
       }
     } catch (parseError) {
       console.error('Failed to parse AI response as JSON:', parseError);
@@ -494,7 +782,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
       sessionId,
       role: 'assistant',
       content: response.message,
-      metadata: { budgetActions: response.budgetActions }
+		metadata: { budgetActions: response.budgetActions, aiProvider }
     });
 
     // 7. Extract and save user preferences (learning)
@@ -516,6 +804,9 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     if (learned) {
       response.learnedProfile = learned;
     }
+
+	  // 11. Include AI provider info
+	  response.aiProvider = aiProvider;
 
     return json(response);
 
@@ -558,10 +849,31 @@ export const GET: RequestHandler = async ({ request, cookies, url }) => {
       result.recentSessions = await AI.getUserRecentSessions(userId, 10);
     }
 
+    // Get session summaries with titles for chat history sidebar
+    if (type === 'all' || type === 'sessions') {
+      result.sessions = await AI.getUserSessionSummaries(userId, 20);
+    }
+
+    // Get messages for a specific session
+    if (type === 'messages') {
+      const sessionId = url.searchParams.get('sessionId');
+      if (sessionId) {
+        result.messages = await AI.getSessionChatHistory(sessionId);
+      }
+    }
+
     // Add smart suggestions for any request
     if (type === 'all' || type === 'suggestions') {
       const profile = result.profile || await AI.getUserProfile(userId);
-      result.suggestions = await AI.getSmartSuggestions(profile, 6);
+		  result.suggestions = await AI.getSmartSuggestions(profile, 4);
+	  }
+
+	  // Add AI provider info
+	  const ZAI_API_KEY = process.env.ZAI_API_KEY || '';
+	  result.aiProvider = ZAI_API_KEY ? 'zai' : 'gemini';
+	  result.availableProviders = ['gemini'];
+	  if (ZAI_API_KEY) {
+		  result.availableProviders.push('zai');
     }
 
     return json(result);

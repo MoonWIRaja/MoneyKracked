@@ -58,6 +58,7 @@
     categoryName: string;
     categoryIcon: string;
     categoryColor: string;
+    notes?: string | null;
   }
   
   interface BudgetCategory {
@@ -90,7 +91,31 @@
     date: new Date().toISOString().split('T')[0],
     notes: ''
   });
-  
+
+  // Delete Transaction Confirmation Modal
+  let showDeleteConfirmModal = $state(false);
+  let deletingTransactionId = $state<string | null>(null);
+  let deletingTransaction = $state(false);
+  let deleteError = $state('');
+
+  // Edit Transaction Modal
+  let showEditModal = $state(false);
+  let showEditConfirmModal = $state(false);
+  let currentEditingTransaction = $state<Transaction | null>(null);
+  let editingTransaction = $state(false);
+  let editError = $state('');
+  let editTransaction = $state({
+    payee: '',
+    amount: '',
+    type: 'expense' as 'income' | 'expense',
+    categoryId: '',
+    date: '',
+    notes: ''
+  });
+
+  // Check if editing "Other" category
+  const isEditOtherCategory = $derived(editTransaction.categoryId === 'other');
+
   // Check if selected category is "Other" (preset id = 'other')
   const isOtherCategory = $derived(newTransaction.categoryId === 'other');
   
@@ -233,22 +258,153 @@
   }
   
   async function deleteTransaction(id: string) {
-    if (!confirm('Delete this transaction?')) return;
-    
+    // Show confirmation modal instead of browser confirm
+    deletingTransactionId = id;
+    showDeleteConfirmModal = true;
+  }
+
+  async function confirmDelete() {
+    if (!deletingTransactionId) return;
+
+    deletingTransaction = true;
+    deleteError = '';
+
     try {
-      const response = await fetch(`/api/transactions/${id}`, {
+      const response = await fetch(`/api/transactions/${deletingTransactionId}`, {
         method: 'DELETE',
         credentials: 'include'
       });
-      
+
       if (response.ok) {
-        transactions = transactions.filter(t => t.id !== id);
+        transactions = transactions.filter(t => t.id !== deletingTransactionId);
+        showDeleteConfirmModal = false;
+        deletingTransactionId = null;
+      } else {
+        deleteError = 'Failed to delete transaction';
       }
     } catch (err) {
       console.error('Failed to delete transaction:', err);
+      deleteError = 'Failed to delete transaction';
+    } finally {
+      deletingTransaction = false;
     }
   }
-  
+
+  function cancelDelete() {
+    showDeleteConfirmModal = false;
+    deletingTransactionId = null;
+    deleteError = '';
+  }
+
+  // Edit Transaction Functions
+  function openEditModal(transaction: Transaction) {
+    currentEditingTransaction = transaction;
+
+    // Format date to YYYY-MM-DD for input
+    let formattedDate = transaction.date;
+    if (transaction.date && !transaction.date.includes('T')) {
+      // Already in YYYY-MM-DD format
+      formattedDate = transaction.date;
+    } else if (transaction.date) {
+      // Convert ISO date to YYYY-MM-DD
+      formattedDate = new Date(transaction.date).toISOString().split('T')[0];
+    }
+
+    editTransaction = {
+      payee: transaction.payee || '',
+      amount: String(transaction.amount),
+      type: transaction.type === 'transfer' ? 'expense' : transaction.type as 'income' | 'expense',
+      categoryId: transaction.categoryName?.toLowerCase().replace(/\s+/g, '-') || '',
+      date: formattedDate || new Date().toISOString().split('T')[0],
+      notes: transaction.notes || ''
+    };
+    editError = '';
+    showEditModal = true;
+  }
+
+  function closeEditModal() {
+    showEditModal = false;
+    currentEditingTransaction = null;
+    editError = '';
+  }
+
+  function initiateSaveEdit() {
+    // Validate
+    if (!editTransaction.amount || !editTransaction.type) {
+      editError = 'Amount and type are required';
+      return;
+    }
+
+    // Require notes for "Other" category
+    if (isEditOtherCategory && !editTransaction.notes.trim()) {
+      editError = 'Please add a note to describe what this transaction is for';
+      return;
+    }
+
+    // Show confirmation modal
+    showEditConfirmModal = true;
+  }
+
+  async function confirmSaveEdit() {
+    if (!currentEditingTransaction) return;
+
+    editingTransaction = true;
+    editError = '';
+
+    try {
+      // Determine category name based on transaction type
+      let categoryNameToSend: string | undefined;
+      let categoryIdToSend: string | null = null;
+
+      if (editTransaction.type === 'income') {
+        // Income transactions always use 'Income' category
+        categoryNameToSend = 'Income';
+      } else if (editTransaction.type === 'expense') {
+        // For expenses: if 'Other' category selected or no category selected
+        if (isEditOtherCategory || !editTransaction.categoryId) {
+          categoryNameToSend = 'Other';
+        } else {
+          // Get category name from the selected category
+          const selectedCat = availableCategories.find(c => c.id === editTransaction.categoryId);
+          categoryNameToSend = selectedCat?.name;
+        }
+      }
+
+      const response = await fetch(`/api/transactions/${currentEditingTransaction.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          payee: editTransaction.payee.trim() || (isEditOtherCategory ? editTransaction.notes : ''),
+          amount: parseFloat(editTransaction.amount),
+          type: editTransaction.type,
+          categoryId: categoryIdToSend,
+          categoryName: categoryNameToSend,
+          date: editTransaction.date,
+          notes: editTransaction.notes
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        showEditConfirmModal = false;
+        showEditModal = false;
+        await fetchTransactions();
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (err: any) {
+      editError = err.message || 'Failed to update transaction';
+    } finally {
+      editingTransaction = false;
+    }
+  }
+
+  function cancelEditSave() {
+    showEditConfirmModal = false;
+  }
+
   function resetNewTransaction() {
     newTransaction = {
       payee: '',
@@ -447,13 +603,22 @@
               {formatAmount(transaction.amount, transaction.type)}
             </span>
             {#if isCurrentMonth}
-              <button
-                onclick={() => deleteTransaction(transaction.id)}
-                class="p-1 text-text-muted hover:text-danger opacity-0 group-hover:opacity-100 transition-all"
-                title="Delete"
-              >
-                <span class="material-symbols-outlined text-lg">delete</span>
-              </button>
+              <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                <button
+                  onclick={() => openEditModal(transaction)}
+                  class="p-1 text-text-muted hover:text-primary transition-colors"
+                  title="Edit"
+                >
+                  <span class="material-symbols-outlined text-lg">edit</span>
+                </button>
+                <button
+                  onclick={() => deleteTransaction(transaction.id)}
+                  class="p-1 text-text-muted hover:text-danger transition-colors"
+                  title="Delete"
+                >
+                  <span class="material-symbols-outlined text-lg">delete</span>
+                </button>
+              </div>
             {/if}
           </div>
         </div>
@@ -601,6 +766,192 @@
         <Button onclick={addTransaction} loading={addingTransaction}>
           Add Transaction
         </Button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Delete Confirmation Modal -->
+{#if showDeleteConfirmModal}
+  <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div class="bg-surface-dark rounded-2xl border border-border-dark w-full max-w-sm mx-4 shadow-2xl">
+      <div class="p-6 text-center">
+        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-danger/20 mb-4">
+          <span class="material-symbols-outlined text-danger text-2xl">delete</span>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-2">Delete Transaction?</h3>
+        <p class="text-text-secondary text-sm mb-4">
+          Are you sure you want to delete this transaction? This action cannot be undone.
+        </p>
+
+        {#if deleteError}
+          <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm mb-4">
+            {deleteError}
+          </div>
+        {/if}
+
+        <div class="flex gap-3">
+          <Button variant="secondary" onclick={cancelDelete} disabled={deletingTransaction} class="flex-1">
+            Cancel
+          </Button>
+          <Button onclick={confirmDelete} loading={deletingTransaction} variant="danger" class="flex-1">
+            Delete
+          </Button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Edit Transaction Modal -->
+{#if showEditModal && currentEditingTransaction}
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div class="bg-surface-dark rounded-2xl border border-border-dark w-full max-w-md mx-4 shadow-2xl">
+      <div class="p-6 border-b border-border-dark">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-bold text-white">Edit Transaction</h3>
+          <button onclick={closeEditModal} class="text-text-muted hover:text-white">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="p-6 space-y-4">
+        {#if editError}
+          <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm">
+            {editError}
+          </div>
+        {/if}
+
+        <!-- Type Toggle -->
+        <div class="flex gap-2">
+          <button
+            onclick={() => editTransaction.type = 'expense'}
+            class="flex-1 py-2 rounded-lg font-medium transition-colors
+              {editTransaction.type === 'expense' ? 'bg-warning text-white' : 'bg-border-dark text-text-secondary'}"
+          >
+            Expense
+          </button>
+          <button
+            onclick={() => editTransaction.type = 'income'}
+            class="flex-1 py-2 rounded-lg font-medium transition-colors
+              {editTransaction.type === 'income' ? 'bg-primary text-white' : 'bg-border-dark text-text-secondary'}"
+          >
+            Income
+          </button>
+        </div>
+
+        <!-- Amount -->
+        <div>
+          <label for="edit-tx-amount" class="block text-sm font-medium text-text-secondary mb-1.5">
+            Amount ({currencies[selectedCurrency].symbol})
+          </label>
+          <input
+            id="edit-tx-amount"
+            type="number"
+            placeholder="0.00"
+            bind:value={editTransaction.amount}
+            class="w-full px-4 py-2.5 rounded-lg bg-bg-dark border border-border-dark text-white text-xl font-bold placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+
+        <!-- Description -->
+        <div>
+          <label for="edit-tx-desc" class="block text-sm font-medium text-text-secondary mb-1.5">Description</label>
+          <input
+            id="edit-tx-desc"
+            type="text"
+            placeholder="e.g. Lunch at McD"
+            bind:value={editTransaction.payee}
+            class="w-full px-4 py-2.5 rounded-lg bg-bg-dark border border-border-dark text-white placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+
+        <!-- Category (only for Expense) -->
+        {#if editTransaction.type === 'expense'}
+          <div>
+            <label for="edit-tx-category" class="block text-sm font-medium text-text-secondary mb-1.5">Category</label>
+            <select
+              id="edit-tx-category"
+              bind:value={editTransaction.categoryId}
+              class="w-full px-4 py-2.5 rounded-lg bg-bg-dark border border-border-dark text-white focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="">Select category...</option>
+              {#each availableCategories as cat}
+                <option value={cat.id}>{cat.name}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+
+        <!-- Notes (Required for Other category) -->
+        {#if isEditOtherCategory}
+          <div class="p-3 bg-warning/10 border border-warning/30 rounded-lg">
+            <label for="edit-tx-notes" class="block text-sm font-medium text-warning mb-1.5">
+              <span class="material-symbols-outlined text-sm align-middle">edit_note</span>
+              What is this for? (Required)
+            </label>
+            <textarea
+              id="edit-tx-notes"
+              placeholder="e.g. Travel expenses, Gift for friend, etc."
+              bind:value={editTransaction.notes}
+              rows="2"
+              class="w-full px-4 py-2.5 rounded-lg bg-bg-dark border border-border-dark text-white placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-warning resize-none"
+            ></textarea>
+          </div>
+        {/if}
+
+        <!-- Date -->
+        <div>
+          <label for="edit-tx-date" class="block text-sm font-medium text-text-secondary mb-1.5">Date</label>
+          <input
+            id="edit-tx-date"
+            type="date"
+            bind:value={editTransaction.date}
+            class="w-full px-4 py-2.5 rounded-lg bg-bg-dark border border-border-dark text-white focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+      </div>
+
+      <div class="p-6 border-t border-border-dark flex justify-end gap-3">
+        <Button variant="secondary" onclick={closeEditModal} disabled={editingTransaction}>
+          Cancel
+        </Button>
+        <Button onclick={initiateSaveEdit} disabled={editingTransaction}>
+          Save Changes
+        </Button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Edit Confirmation Modal -->
+{#if showEditConfirmModal && currentEditingTransaction}
+  <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div class="bg-surface-dark rounded-2xl border border-border-dark w-full max-w-sm mx-4 shadow-2xl">
+      <div class="p-6 text-center">
+        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/20 mb-4">
+          <span class="material-symbols-outlined text-primary text-2xl">edit</span>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-2">Save Transaction Changes?</h3>
+        <p class="text-text-secondary text-sm mb-4">
+          Are you sure you want to update this transaction to <strong class="text-primary">{currencies[selectedCurrency].symbol} {parseFloat(editTransaction.amount).toLocaleString()}</strong>?
+        </p>
+
+        {#if editError}
+          <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm mb-4">
+            {editError}
+          </div>
+        {/if}
+
+        <div class="flex gap-3">
+          <Button variant="secondary" onclick={cancelEditSave} disabled={editingTransaction} class="flex-1">
+            Cancel
+          </Button>
+          <Button onclick={confirmSaveEdit} loading={editingTransaction} class="flex-1">
+            Confirm & Save
+          </Button>
+        </div>
       </div>
     </div>
   </div>

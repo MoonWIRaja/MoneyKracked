@@ -52,6 +52,23 @@
   });
   let addingBudget = $state(false);
   let addError = $state('');
+
+  // Edit Budget Modal
+  let showEditModal = $state(false);
+  let showEditConfirmModal = $state(false);
+  let currentEditingBudget = $state<Budget | null>(null);
+  let editBudget = $state({
+    categoryName: '',
+    amount: '',
+    period: 'monthly'
+  });
+  let savingEdit = $state(false);
+  let editError = $state('');
+
+  // Delete Confirmation Modal
+  let showDeleteConfirmModal = $state(false);
+  let deletingBudgetId = $state<string | null>(null);
+  let deletingBudget = $state(false);
   
   // Preset categories for dropdown
   const presetCategories = [
@@ -212,20 +229,106 @@
   }
   
   async function deleteBudget(id: string) {
-    if (!confirm('Are you sure you want to delete this budget?')) return;
-    
+    // Show confirmation modal instead of browser confirm
+    deletingBudgetId = id;
+    showDeleteConfirmModal = true;
+  }
+
+  async function confirmDelete() {
+    if (!deletingBudgetId) return;
+
+    deletingBudget = true;
+
     try {
-      const response = await fetch(`/api/budgets/${id}`, {
+      const response = await fetch(`/api/budgets/${deletingBudgetId}`, {
         method: 'DELETE',
         credentials: 'include'
       });
-      
+
       if (response.ok) {
-        budgets = budgets.filter(b => b.id !== id);
+        budgets = budgets.filter(b => b.id !== deletingBudgetId);
+        showDeleteConfirmModal = false;
+        deletingBudgetId = null;
+      } else {
+        editError = 'Failed to delete budget';
       }
     } catch (err) {
       console.error('Failed to delete budget:', err);
+      editError = 'Failed to delete budget';
+    } finally {
+      deletingBudget = false;
     }
+  }
+
+  function cancelDelete() {
+    showDeleteConfirmModal = false;
+    deletingBudgetId = null;
+    editError = '';
+  }
+
+  function openEditModal(budget: Budget) {
+    currentEditingBudget = budget;
+    editBudget = {
+      categoryName: budget.categoryName,
+      amount: String(budget.limitAmount),
+      period: budget.period || 'monthly'
+    };
+    editError = '';
+    showEditModal = true;
+  }
+
+  function closeEditModal() {
+    showEditModal = false;
+    currentEditingBudget = null;
+    editError = '';
+  }
+
+  function initiateSaveEdit() {
+    // Validate
+    if (!editBudget.categoryName || !editBudget.amount) {
+      editError = 'Please fill in all fields';
+      return;
+    }
+
+    // Show confirmation modal
+    showEditConfirmModal = true;
+  }
+
+  async function confirmSaveEdit() {
+    if (!currentEditingBudget) return;
+
+    savingEdit = true;
+    editError = '';
+
+    try {
+      const response = await fetch(`/api/budgets/${currentEditingBudget.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          amount: parseFloat(editBudget.amount),
+          period: editBudget.period
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        showEditConfirmModal = false;
+        showEditModal = false;
+        await loadBudgets();
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (err: any) {
+      editError = err.message || 'Failed to update budget';
+    } finally {
+      savingEdit = false;
+    }
+  }
+
+  function cancelEditSave() {
+    showEditConfirmModal = false;
   }
   
   function goToAICoach() {
@@ -443,13 +546,22 @@
                 {/if}
               </div>
               {#if !isUnlimited && !isIncome}
-                <button
-                  onclick={() => deleteBudget(budget.id)}
-                  class="p-1 text-text-muted hover:text-danger transition-colors"
-                  title="Delete budget"
-                >
-                  <span class="material-symbols-outlined text-lg">delete</span>
-                </button>
+                <div class="flex items-center gap-1">
+                  <button
+                    onclick={() => openEditModal(budget)}
+                    class="p-1 text-text-muted hover:text-primary transition-colors"
+                    title="Edit budget"
+                  >
+                    <span class="material-symbols-outlined text-lg">edit</span>
+                  </button>
+                  <button
+                    onclick={() => deleteBudget(budget.id)}
+                    class="p-1 text-text-muted hover:text-danger transition-colors"
+                    title="Delete budget"
+                  >
+                    <span class="material-symbols-outlined text-lg">delete</span>
+                  </button>
+                </div>
               {/if}
             </div>
           </div>
@@ -552,6 +664,126 @@
         <Button onclick={addBudget} loading={addingBudget}>
           Add Budget
         </Button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Edit Budget Modal -->
+{#if showEditModal && currentEditingBudget}
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+    <div class="bg-surface-dark rounded-2xl border border-border-dark w-full max-w-md mx-4 shadow-2xl">
+      <div class="p-6 border-b border-border-dark">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-bold text-white">Edit Budget</h3>
+          <button onclick={closeEditModal} class="text-text-muted hover:text-white">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+        <p class="text-sm text-text-muted mt-1">{currentEditingBudget.categoryName}</p>
+      </div>
+
+      <div class="p-6 space-y-4">
+        {#if editError}
+          <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm">
+            {editError}
+          </div>
+        {/if}
+
+        <!-- Category (read-only, can't change when editing) -->
+        <div>
+          <span class="block text-sm font-medium text-text-secondary mb-1.5">Category</span>
+          <div class="px-4 py-2.5 rounded-lg bg-bg-dark/50 border border-border-dark text-text-muted">
+            {editBudget.categoryName}
+          </div>
+        </div>
+
+        <!-- Amount -->
+        <div>
+          <label for="edit-budget-amount" class="block text-sm font-medium text-text-secondary mb-1.5">
+            Budget Amount ({currencies[selectedCurrency].symbol})
+          </label>
+          <input
+            id="edit-budget-amount"
+            type="number"
+            placeholder="e.g. 500"
+            bind:value={editBudget.amount}
+            class="w-full px-4 py-2.5 rounded-lg bg-bg-dark border border-border-dark text-white placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+      </div>
+
+      <div class="p-6 border-t border-border-dark flex justify-end gap-3">
+        <Button variant="secondary" onclick={closeEditModal} disabled={savingEdit}>
+          Cancel
+        </Button>
+        <Button onclick={initiateSaveEdit} disabled={savingEdit}>
+          Save Changes
+        </Button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Edit Confirmation Modal -->
+{#if showEditConfirmModal && currentEditingBudget}
+  <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div class="bg-surface-dark rounded-2xl border border-border-dark w-full max-w-sm mx-4 shadow-2xl">
+      <div class="p-6 text-center">
+        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/20 mb-4">
+          <span class="material-symbols-outlined text-primary text-2xl">edit</span>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-2">Save Budget Changes?</h3>
+        <p class="text-text-secondary text-sm mb-4">
+          Are you sure you want to update <strong class="text-white">{currentEditingBudget.categoryName}</strong> budget to <strong class="text-primary">{currencies[selectedCurrency].symbol} {parseFloat(editBudget.amount).toLocaleString()}</strong>?
+        </p>
+
+        {#if editError}
+          <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm mb-4">
+            {editError}
+          </div>
+        {/if}
+
+        <div class="flex gap-3">
+          <Button variant="secondary" onclick={cancelEditSave} disabled={savingEdit} class="flex-1">
+            Cancel
+          </Button>
+          <Button onclick={confirmSaveEdit} loading={savingEdit} class="flex-1">
+            Confirm & Save
+          </Button>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Delete Confirmation Modal -->
+{#if showDeleteConfirmModal}
+  <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div class="bg-surface-dark rounded-2xl border border-border-dark w-full max-w-sm mx-4 shadow-2xl">
+      <div class="p-6 text-center">
+        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-danger/20 mb-4">
+          <span class="material-symbols-outlined text-danger text-2xl">delete</span>
+        </div>
+        <h3 class="text-lg font-bold text-white mb-2">Delete Budget?</h3>
+        <p class="text-text-secondary text-sm mb-4">
+          Are you sure you want to delete this budget? This action cannot be undone.
+        </p>
+
+        {#if editError}
+          <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm mb-4">
+            {editError}
+          </div>
+        {/if}
+
+        <div class="flex gap-3">
+          <Button variant="secondary" onclick={cancelDelete} disabled={deletingBudget} class="flex-1">
+            Cancel
+          </Button>
+          <Button onclick={confirmDelete} loading={deletingBudget} variant="danger" class="flex-1">
+            Delete
+          </Button>
+        </div>
       </div>
     </div>
   </div>
