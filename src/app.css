@@ -6,30 +6,30 @@
   --color-primary: #21c462;
   --color-primary-hover: #1db355;
   --color-primary-light: #21c46220;
-  
+
   /* Background Colors */
   --color-bg-dark: #122018;
   --color-bg-light: #f6f8f7;
-  
+
   /* Surface Colors (Cards, Modals) */
   --color-surface-dark: #1a2c22;
   --color-surface-light: #ffffff;
-  
+
   /* Border Colors */
   --color-border-dark: #2a372f;
   --color-border-light: #e5e7eb;
-  
+
   /* Text Colors */
   --color-text-primary: #ffffff;
   --color-text-secondary: #9ca3af;
   --color-text-muted: #6b7280;
-  
+
   /* Semantic Colors */
   --color-success: #22c55e;
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
   --color-info: #3b82f6;
-  
+
   /* Category Colors */
   --color-category-food: #21c462;
   --color-category-transport: #10b981;
@@ -37,17 +37,17 @@
   --color-category-entertainment: #f97316;
   --color-category-shopping: #8b5cf6;
   --color-category-other: #6b7280;
-  
+
   /* Fonts */
   --font-family-display: 'Inter', system-ui, sans-serif;
-  
+
   /* Border Radius */
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
   --radius-lg: 1rem;
   --radius-xl: 1.5rem;
   --radius-full: 9999px;
-  
+
   /* Shadows */
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
@@ -130,4 +130,41 @@ h1, h2, h3, h4, h5, h6 {
     'wght' 400,
     'GRAD' 0,
     'opsz' 24;
+}
+
+/* ===== PERFORMANCE: CSS Containment ===== */
+.card, .modal, .sidebar {
+  contain: layout style;
+}
+
+.chart-container, .transaction-list {
+  contain: layout style paint;
+}
+
+/* ===== PERFORMANCE: GPU Acceleration ===== */
+.gpu-accelerated {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  perspective: 1000px;
+}
+
+/* ===== PERFORMANCE: Fade Animation ===== */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+/* ===== PERFORMANCE: Image optimization ===== */
+img {
+  image-rendering: auto;
+}
+
+@supports (image-rendering: crisp-edges) {
+  img {
+    image-rendering: crisp-edges;
+  }
 }

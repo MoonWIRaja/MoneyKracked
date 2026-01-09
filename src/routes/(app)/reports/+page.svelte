@@ -2,15 +2,29 @@
   import { Header } from '$lib/components/layout';
   import { Card, Button } from '$lib/components/ui';
   import { onMount } from 'svelte';
-  
+  import { type Currency } from '$lib/utils/currency';
+  import { getExchangeRates, getUserPreferences, convertAmountMYR, getCachedRatesSync, getCachedPreferencesSync } from '$lib/stores/app-store';
+
   // Currency settings
   const currencies: Record<string, { symbol: string; locale: string }> = {
     'MYR': { symbol: 'RM', locale: 'en-MY' },
     'SGD': { symbol: 'S$', locale: 'en-SG' },
     'USD': { symbol: '$', locale: 'en-US' }
   };
-  
-  let selectedCurrency = $state('MYR');
+
+  // PERFORMANCE: Cached formatters for each currency
+  const formatters = {
+    'en-MY': new Intl.NumberFormat('en-MY'),
+    'en-SG': new Intl.NumberFormat('en-SG'),
+    'en-US': new Intl.NumberFormat('en-US')
+  };
+
+  function formatNumber(amount: number, locale: string): string {
+    return formatters[locale as keyof typeof formatters]?.format(amount) || amount.toLocaleString();
+  }
+
+  let selectedCurrency = $state<Currency>('MYR');
+  let exchangeRates: Record<string, Record<string, number>> = $state({});
   let loading = $state(true);
   
   // Month/Year selector (like Budget page)
@@ -126,28 +140,46 @@
   function getBarHeight(value: number): number {
     return maxChartValue > 0 ? (value / maxChartValue) * 100 : 0;
   }
-  
+
+  // PERFORMANCE: Use shared store for faster loading (cached from layout preload)
+  // First try synchronous cache (instant if preloaded), then async fetch if needed
   onMount(async () => {
-    await fetchPreferences();
+    // Try to get cached data instantly (from layout preload)
+    const cachedRates = getCachedRatesSync();
+    const cachedPrefs = getCachedPreferencesSync();
+
+    if (cachedRates) {
+      exchangeRates = cachedRates;
+    }
+    if (cachedPrefs?.currency) {
+      selectedCurrency = cachedPrefs.currency;
+    }
+
+    // Fetch if not cached (should be rare due to layout preload)
+    const [rates, prefs] = await Promise.all([
+      cachedRates ? cachedRates : getExchangeRates(),
+      cachedPrefs ? cachedPrefs : getUserPreferences()
+    ]);
+
+    if (!cachedRates) {
+      exchangeRates = rates;
+    }
+    if (!cachedPrefs && prefs?.currency) {
+      selectedCurrency = prefs.currency;
+    }
+
     await fetchData();
   });
-  
+
   // Re-fetch when month/year changes
   $effect(() => {
     const _ = selectedMonth + selectedYear;
     fetchData();
   });
-  
-  async function fetchPreferences() {
-    try {
-      const response = await fetch('/api/preferences', { credentials: 'include' });
-      const result = await response.json();
-      if (result.preferences?.currency) {
-        selectedCurrency = result.preferences.currency;
-      }
-    } catch (err) {
-      console.error('Failed to load preferences:', err);
-    }
+
+  // Convert amount from MYR to selected currency
+  function convertAmount(amountMYR: number): number {
+    return convertAmountMYR(amountMYR, selectedCurrency, exchangeRates);
   }
   
   async function fetchData() {
@@ -155,16 +187,21 @@
     try {
       const month = selectedMonth + 1;
       const year = selectedYear;
-      
+
       // Fetch budgets
       const budgetResponse = await fetch(`/api/budgets?month=${month}&year=${year}`, {
         credentials: 'include'
       });
       const budgetData = await budgetResponse.json();
       if (budgetData.budgets) {
-        budgets = budgetData.budgets;
+        // Convert budget amounts to selected currency
+        budgets = budgetData.budgets.map((b: any) => ({
+          ...b,
+          limitAmount: convertAmount(b.limitAmount),
+          spent: 0  // Will be calculated from transactions
+        }));
       }
-      
+
       // Fetch transactions for the month
       const startDate = new Date(year, month - 1, 1).toISOString().split('T')[0];
       const endDate = new Date(year, month, 0).toISOString().split('T')[0];
@@ -173,7 +210,11 @@
       });
       const txData = await txResponse.json();
       if (txData.transactions) {
-        transactions = txData.transactions;
+        // Convert transaction amounts to selected currency
+        transactions = txData.transactions.map((t: any) => ({
+          ...t,
+          amount: convertAmount(t.amount)
+        }));
       }
     } catch (err) {
       console.error('Failed to load data:', err);
@@ -181,10 +222,10 @@
       loading = false;
     }
   }
-  
+
   function formatAmount(amount: number): string {
     const curr = currencies[selectedCurrency];
-    return curr.symbol + ' ' + new Intl.NumberFormat(curr.locale).format(amount);
+    return curr.symbol + ' ' + formatNumber(amount, curr.locale);
   }
 
   // Export CSV - Proper CSV format with BOM for Excel compatibility
@@ -193,9 +234,9 @@
       const curr = currencies[selectedCurrency];
       const now = new Date();
 
-      // Helper function to format amount
+      // Helper function to format amount (use cached formatter)
       function fmt(amt: number): string {
-        return curr.symbol + ' ' + new Intl.NumberFormat(curr.locale).format(amt);
+        return curr.symbol + ' ' + formatNumber(amt, curr.locale);
       }
 
       // Helper to escape CSV values

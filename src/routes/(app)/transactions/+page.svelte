@@ -2,15 +2,32 @@
   import { Header } from '$lib/components/layout';
   import { Card, Button } from '$lib/components/ui';
   import { onMount } from 'svelte';
-  
+  import { type Currency } from '$lib/utils/currency';
+  import { getExchangeRates, getUserPreferences, convertAmountMYR, convertToMYR as convertToMYRStore, getCachedRatesSync, getCachedPreferencesSync } from '$lib/stores/app-store';
+
   // Currency settings
   const currencies: Record<string, { symbol: string; locale: string }> = {
     'MYR': { symbol: 'RM', locale: 'en-MY' },
     'SGD': { symbol: 'S$', locale: 'en-SG' },
     'USD': { symbol: '$', locale: 'en-US' }
   };
-  
-  let selectedCurrency = $state('MYR');
+
+  // PERFORMANCE: Cached formatters for each currency
+  const formatters = {
+    'en-MY': new Intl.NumberFormat('en-MY'),
+    'en-SG': new Intl.NumberFormat('en-SG'),
+    'en-US': new Intl.NumberFormat('en-US')
+  };
+
+  function formatNumber(amount: number, locale: string): string {
+    return formatters[locale as keyof typeof formatters]?.format(amount) || amount.toLocaleString();
+  }
+
+  // PERFORMANCE: Cached date formatter
+  const dateFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+  let selectedCurrency = $state<Currency>('MYR');
+  let exchangeRates: Record<string, Record<string, number>> = $state({});
   
   // Month/Year selector
   const currentDate = new Date();
@@ -123,30 +140,52 @@
   
   // Category filter options
   const categoryFilters = $derived(['All', ...new Set(transactions.map(t => t.categoryName))]);
-  
+
+  // PERFORMANCE: Use shared store for faster loading (cached from layout preload)
   onMount(async () => {
-    await fetchPreferences();
+    // Try to get cached data instantly (from layout preload)
+    const cachedRates = getCachedRatesSync();
+    const cachedPrefs = getCachedPreferencesSync();
+
+    if (cachedRates) {
+      exchangeRates = cachedRates;
+    }
+    if (cachedPrefs?.currency) {
+      selectedCurrency = cachedPrefs.currency;
+    }
+
+    // Fetch if not cached (should be rare due to layout preload)
+    const [rates, prefs] = await Promise.all([
+      cachedRates ? cachedRates : getExchangeRates(),
+      cachedPrefs ? cachedPrefs : getUserPreferences()
+    ]);
+
+    if (!cachedRates) {
+      exchangeRates = rates;
+    }
+    if (!cachedPrefs && prefs?.currency) {
+      selectedCurrency = prefs.currency;
+    }
+
     await fetchBudgetCategories();
     await fetchTransactions();
   });
-  
+
+  // Convert amount from MYR to selected currency
+  function convertAmount(amountMYR: number): number {
+    return convertAmountMYR(amountMYR, selectedCurrency, exchangeRates);
+  }
+
+  // Convert amount from selected currency back to MYR (for saving to database)
+  function convertToMYR(amount: number): number {
+    return convertToMYRStore(amount, selectedCurrency, exchangeRates);
+  }
+
   // Re-fetch when month/year changes
   $effect(() => {
     const _ = selectedMonth + selectedYear;
     fetchTransactions();
   });
-  
-  async function fetchPreferences() {
-    try {
-      const response = await fetch('/api/preferences', { credentials: 'include' });
-      const result = await response.json();
-      if (result.preferences?.currency) {
-        selectedCurrency = result.preferences.currency;
-      }
-    } catch (err) {
-      console.error('Failed to load preferences:', err);
-    }
-  }
   
   async function fetchBudgetCategories() {
     try {
@@ -232,7 +271,7 @@
         credentials: 'include',
         body: JSON.stringify({
           payee: newTransaction.payee.trim() || (isOtherCategory ? newTransaction.notes : ''),
-          amount: parseFloat(newTransaction.amount),
+          amount: convertToMYR(parseFloat(newTransaction.amount)), // Convert to MYR for database
           type: newTransaction.type,
           categoryId: categoryIdToSend,
           categoryName: categoryNameToSend,
@@ -312,7 +351,7 @@
 
     editTransaction = {
       payee: transaction.payee || '',
-      amount: String(transaction.amount),
+      amount: String(convertAmount(transaction.amount)), // Convert from MYR to selected currency for display
       type: transaction.type === 'transfer' ? 'expense' : transaction.type as 'income' | 'expense',
       categoryId: transaction.categoryName?.toLowerCase().replace(/\s+/g, '-') || '',
       date: formattedDate || new Date().toISOString().split('T')[0],
@@ -376,7 +415,7 @@
         credentials: 'include',
         body: JSON.stringify({
           payee: editTransaction.payee.trim() || (isEditOtherCategory ? editTransaction.notes : ''),
-          amount: parseFloat(editTransaction.amount),
+          amount: convertToMYR(parseFloat(editTransaction.amount)), // Convert to MYR for database
           type: editTransaction.type,
           categoryId: categoryIdToSend,
           categoryName: categoryNameToSend,
@@ -430,16 +469,12 @@
   
   function formatAmount(amount: number, type: string): string {
     const curr = currencies[selectedCurrency];
-    const formatted = curr.symbol + ' ' + new Intl.NumberFormat(curr.locale).format(Math.abs(amount));
+    const formatted = curr.symbol + ' ' + formatNumber(Math.abs(amount), curr.locale);
     return type === 'income' ? `+ ${formatted}` : `- ${formatted}`;
   }
-  
+
   function formatDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleDateString('en-US', { 
-      weekday: 'short',
-      month: 'short', 
-      day: 'numeric'
-    });
+    return dateFormatter.format(new Date(dateStr));
   }
   
   const filteredTransactions = $derived(

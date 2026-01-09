@@ -119,14 +119,21 @@
     fetchPreferences();
     fetchTwoFactorStatus();
   });
-  
-  // Auto-save when preferences change
+
+  // PERFORMANCE: Debounced auto-save to avoid excessive API calls
+  let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+
   $effect(() => {
     // Track changes to save
     const _ = currency + theme + notifications.toString();
     // Only save if not the initial load
     if (typeof window !== 'undefined') {
-      savePreferences();
+      // Clear existing timeout
+      if (saveTimeout) clearTimeout(saveTimeout);
+      // Debounce save by 500ms
+      saveTimeout = setTimeout(() => {
+        savePreferences();
+      }, 500);
     }
   });
   

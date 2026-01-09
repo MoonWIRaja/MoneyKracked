@@ -20,7 +20,10 @@
       "Bash(npm update:*)",
       "Bash(npx drizzle-kit push:pg:*)",
       "Bash(npx drizzle-kit push:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(npm run build:*)",
+      "Bash(wc:*)",
+      "Bash(find:*)"
     ]
   }
 }

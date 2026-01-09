@@ -194,6 +194,23 @@ function extractMonthYear(message: string): { month: number; year: number } {
 	return { month, year };
 }
 
+// Helper function to format relative date for session summary
+function formatRelativeDate(date: Date): string {
+	const now = new Date();
+	const diff = now.getTime() - date.getTime();
+	const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+	if (days === 0) {
+		return 'today';
+	} else if (days === 1) {
+		return 'yesterday';
+	} else if (days < 7) {
+		return date.toLocaleDateString('en-US', { weekday: 'long' });
+	} else {
+		return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+	}
+}
+
 interface ChatResponse {
 	message: string;
 	budgetActions?: BudgetAction[];
@@ -850,8 +867,29 @@ export const GET: RequestHandler = async ({ request, cookies, url }) => {
     }
 
     // Get session summaries with titles for chat history sidebar
+	  // If no summaries exist, fall back to recent sessions from chat history
     if (type === 'all' || type === 'sessions') {
-      result.sessions = await AI.getUserSessionSummaries(userId, 20);
+		let sessions = await AI.getUserSessionSummaries(userId, 20);
+		// If no summaries, get recent sessions from chat history instead
+		if (!sessions || sessions.length === 0) {
+			const recentSessions = await AI.getUserRecentSessions(userId, 20);
+			// Format recent sessions to match session structure (use 'as any' for type compatibility)
+			sessions = recentSessions.map((s: any) => ({
+				id: s.session_id,
+				sessionId: s.session_id,
+				userId: userId,
+				title: 'Chat',
+				summary: `Started ${formatRelativeDate(new Date(s.last_message_at))}`,
+				lastMessageAt: new Date(s.last_message_at),
+				createdAt: new Date(s.last_message_at),
+				messageCount: s.message_count || 0,
+				totalTokens: 0,
+				topics: [],
+				actionItems: [],
+				sentiment: 'neutral'
+			})) as any;
+		}
+		result.sessions = sessions;
     }
 
     // Get messages for a specific session
@@ -882,4 +920,52 @@ export const GET: RequestHandler = async ({ request, cookies, url }) => {
     console.error('AI Chat GET error:', err);
     return json({ error: err.message }, { status: 500 });
   }
+};
+
+/**
+ * DELETE - Delete a chat session (all messages in that session)
+ */
+export const DELETE: RequestHandler = async ({ request, cookies, url }) => {
+	try {
+		const { id: userId } = await getUserInfo(request, cookies);
+
+		if (!userId) {
+			return json({ error: 'Not authenticated' }, { status: 401 });
+		}
+
+		const sessionId = url.searchParams.get('sessionId');
+		if (!sessionId) {
+			return json({ error: 'Session ID is required' }, { status: 400 });
+		}
+
+		// Verify the session belongs to this user
+		const { aiChatHistory } = await import('$lib/server/db/schema');
+		const { eq } = await import('drizzle-orm');
+
+		const sessionMessages = await db.query.aiChatHistory.findMany({
+			where: eq(aiChatHistory.sessionId, sessionId)
+		});
+
+		if (sessionMessages.length === 0) {
+			return json({ error: 'Session not found' }, { status: 404 });
+		}
+
+		// Check ownership
+		if (sessionMessages[0].userId !== userId) {
+			return json({ error: 'Not authorized' }, { status: 403 });
+		}
+
+		// Delete all messages in the session
+		await db.delete(aiChatHistory).where(eq(aiChatHistory.sessionId, sessionId));
+
+		// Also delete session summary if exists
+		const { aiSessionSummaries } = await import('$lib/server/db/schema');
+		await db.delete(aiSessionSummaries).where(eq(aiSessionSummaries.sessionId, sessionId));
+
+		return json({ success: true });
+
+	} catch (err: any) {
+		console.error('Delete session error:', err);
+		return json({ error: err.message }, { status: 500 });
+	}
 };

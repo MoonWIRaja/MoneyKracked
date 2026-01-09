@@ -2,17 +2,79 @@
   import { Header } from '$lib/components/layout';
   import { KPICard, SpendingChart, RecentExpenses } from '$lib/components/dashboard';
   import { onMount } from 'svelte';
-  
+  import { type Currency } from '$lib/utils/currency';
+
+  interface ServerBudget {
+    id: string;
+    categoryName: string;
+    categoryIcon: string;
+    categoryColor: string;
+    limitAmount: number;
+    spent: number;
+  }
+
+  interface ServerTransaction {
+    id: string;
+    payee: string;
+    amount: number;
+    type: string;
+    date: string;
+    categoryName: string;
+    categoryIcon: string;
+    categoryColor: string;
+  }
+
+  interface PageData {
+    rates: Record<string, Record<string, number>>;
+    currency: string;
+    month: number;
+    year: number;
+    budgets: ServerBudget[];
+    transactions: ServerTransaction[];
+  }
+
+  interface Props {
+    data: PageData;
+    children?: any;
+  }
+
+  let { data }: Props = $props();
+
   // Currency settings
   const currencies: Record<string, { symbol: string; locale: string }> = {
     'MYR': { symbol: 'RM', locale: 'en-MY' },
     'SGD': { symbol: 'S$', locale: 'en-SG' },
     'USD': { symbol: '$', locale: 'en-US' }
   };
-  
-  let selectedCurrency = $state('MYR');
-  
-  // Budget data from API
+
+  // PERFORMANCE: Move color mapping outside component to avoid recreation
+  const colorClassMap: Record<string, { bg: string; text: string }> = {
+    '#21c462': { bg: 'bg-green-500/20', text: 'text-green-500' },
+    '#10b981': { bg: 'bg-emerald-500/20', text: 'text-emerald-500' },
+    '#3b82f6': { bg: 'bg-blue-500/20', text: 'text-blue-500' },
+    '#f59e0b': { bg: 'bg-amber-500/20', text: 'text-amber-500' },
+    '#ef4444': { bg: 'bg-red-500/20', text: 'text-red-500' },
+    '#8b5cf6': { bg: 'bg-violet-500/20', text: 'text-violet-500' },
+    '#ec4899': { bg: 'bg-pink-500/20', text: 'text-pink-500' },
+    '#06b6d4': { bg: 'bg-cyan-500/20', text: 'text-cyan-500' },
+    '#f97316': { bg: 'bg-orange-500/20', text: 'text-orange-500' },
+    '#6366f1': { bg: 'bg-indigo-500/20', text: 'text-indigo-500' },
+    '#84cc16': { bg: 'bg-lime-500/20', text: 'text-lime-500' },
+    '#14b8a6': { bg: 'bg-teal-500/20', text: 'text-teal-500' },
+    '#6b7280': { bg: 'bg-gray-500/20', text: 'text-gray-500' }
+  };
+
+  // PERFORMANCE: Cached formatters for each currency
+  const formatters = {
+    'en-MY': new Intl.NumberFormat('en-MY'),
+    'en-SG': new Intl.NumberFormat('en-SG'),
+    'en-US': new Intl.NumberFormat('en-US')
+  };
+
+  function formatNumber(amount: number, locale: string): string {
+    return formatters[locale as keyof typeof formatters]?.format(amount) || amount.toLocaleString();
+  }
+
   interface Budget {
     id: string;
     categoryName: string;
@@ -21,16 +83,21 @@
     limitAmount: number;
     spent: number;
   }
-  
-  let budgets = $state<Budget[]>([]);
-  let loading = $state(true);
+
+  // Initialize with server-loaded data (instant display!)
+  // Use destructuring to capture values at component creation
+  const initialData = data;
+  let selectedCurrency = $state<Currency>((initialData?.currency as Currency) || 'MYR');
+  let exchangeRates = $state<Record<string, Record<string, number>>>(initialData?.rates || {});
+  let budgets = $state<Budget[]>(initialData?.budgets || []);
+  let loading = $state(false); // No loading needed - data is already here!
 
   // Spending chart data
   let spendingData: Array<{ name: string; value: number; percentage: number; color: string; formattedValue: string }> = $state([]);
   let remainingBudgetData = $state<{ value: number; formattedValue: string; percentage: number } | undefined>(undefined);
-  let totalBudgetWithIncome = $state(0); // Total including income for chart display
-  let totalBudgetKPI = $state(0); // Total budget for KPI cards (including income)
-  let remainingBudgetKPI = $state(0); // Remaining budget for KPI cards (including income)
+  let totalBudgetWithIncome = $state(0);
+  let totalBudgetKPI = $state(0);
+  let remainingBudgetKPI = $state(0);
   let recentExpenses: Array<{
     id: string;
     payee: string;
@@ -43,202 +110,154 @@
 
   // Computed values from budgets (for overspent categories only)
   const overspentCategories = $derived(budgets.filter(b => b.spent > b.limitAmount).length);
-  
-  // Fetch preferences and budget data on mount
-  onMount(async () => {
-    await fetchPreferences();
-    await fetchBudgetData();
+
+  // Convert amount from MYR to selected currency
+  function convertAmount(amountMYR: number): number {
+    if (selectedCurrency === 'MYR') return amountMYR;
+    const rate = exchangeRates.MYR?.[selectedCurrency];
+    if (rate) {
+      return Math.round(amountMYR * rate * 100) / 100;
+    }
+    // Fallback default rates
+    const defaultRates: Record<string, number> = { SGD: 0.31, USD: 0.22 };
+    const fallbackRate = defaultRates[selectedCurrency];
+    if (fallbackRate) {
+      return Math.round(amountMYR * fallbackRate * 100) / 100;
+    }
+    return amountMYR;
+  }
+
+  // Process server data immediately (no API calls needed!)
+  function processServerData() {
+    const txs = initialData?.transactions || [];
+    const budgetsData = initialData?.budgets || [];
+
+    // Calculate income total and spending by category
+    let incomeTotalMYR = 0;
+    const spentByCategoryMYR: Record<string, number> = {};
+
+    for (const tx of txs) {
+      if (tx.type === 'income') {
+        incomeTotalMYR += tx.amount;
+      } else if (tx.type === 'expense') {
+        const catName = tx.categoryName || 'Other';
+        spentByCategoryMYR[catName] = (spentByCategoryMYR[catName] || 0) + tx.amount;
+      }
+    }
+
+    // Update budgets with spent amounts
+    budgets = budgetsData.map((b: ServerBudget) => ({
+      ...b,
+      spent: convertAmount(spentByCategoryMYR[b.categoryName] || 0)
+    }));
+
+    // Convert budgets to selected currency for display
+    const budgetsConverted = budgetsData.map((b: ServerBudget) => ({
+      ...b,
+      limitAmount: convertAmount(b.limitAmount),
+      spent: convertAmount(spentByCategoryMYR[b.categoryName] || 0)
+    }));
+
+    // Total budget = budget limits + income (all converted)
+    const budgetLimitsConverted = budgetsConverted.reduce((sum: number, b: any) => sum + b.limitAmount, 0);
+    const incomeTotalConverted = convertAmount(incomeTotalMYR);
+    const calculatedTotalWithIncome = budgetLimitsConverted + incomeTotalConverted;
+
+    // Include all spending from spentByCategory
+    const totalSpentAmountConverted = Object.values(spentByCategoryMYR).reduce((sum: number, amount: number) => sum + convertAmount(amount), 0);
+    const totalRemainingAmount = calculatedTotalWithIncome - totalSpentAmountConverted;
+
+    // Build chart data
+    const curr = currencies[selectedCurrency];
+    spendingData = [];
+
+    const budgetCategoryNames = new Set(budgetsConverted.map((b: Budget) => b.categoryName));
+    const fmt = (amount: number) => curr.symbol + ' ' + formatNumber(amount, curr.locale);
+
+    // Add all budgeted categories
+    for (const b of budgets) {
+      if (b.categoryName === 'Income') continue;
+      const spentConverted = convertAmount(spentByCategoryMYR[b.categoryName] || 0);
+      spendingData.push({
+        name: b.categoryName,
+        value: spentConverted,
+        percentage: calculatedTotalWithIncome > 0 ? (spentConverted / calculatedTotalWithIncome) * 100 : 0,
+        color: b.categoryColor,
+        formattedValue: fmt(spentConverted)
+      });
+    }
+
+    // Add 'Other' category if not in budgets
+    const otherSpentMYR = spentByCategoryMYR['Other'] || 0;
+    const otherSpentConverted = convertAmount(otherSpentMYR);
+    if (!budgetCategoryNames.has('Other')) {
+      spendingData.push({
+        name: 'Other',
+        value: otherSpentConverted,
+        percentage: calculatedTotalWithIncome > 0 ? (otherSpentConverted / calculatedTotalWithIncome) * 100 : 0,
+        color: '#6b7280',
+        formattedValue: fmt(otherSpentConverted)
+      });
+    }
+
+    // Add 'Income' category
+    if (!budgetCategoryNames.has('Income')) {
+      spendingData.push({
+        name: 'Income',
+        value: incomeTotalConverted,
+        percentage: calculatedTotalWithIncome > 0 ? (incomeTotalConverted / calculatedTotalWithIncome) * 100 : 0,
+        color: '#10b981',
+        formattedValue: fmt(incomeTotalConverted)
+      });
+    }
+
+    // Populate recent expenses (top 5)
+    const budgetMap = new Map<string, Budget>(budgetsConverted.map((b: Budget) => [b.categoryName, b]));
+
+    recentExpenses = txs
+      .slice(0, 5)
+      .map((tx: ServerTransaction) => {
+        const category = budgetMap.get(tx.categoryName);
+        const icon = tx.categoryIcon || category?.categoryIcon || 'receipt';
+        const color = tx.categoryColor || category?.categoryColor || '#6b7280';
+        const colorClasses = colorClassMap[color.toLowerCase()] || colorClassMap['#6b7280'];
+
+        return {
+          id: tx.id,
+          payee: tx.payee || 'No description',
+          amount: convertAmount(tx.amount),
+          date: tx.date,
+          icon: icon,
+          iconColor: colorClasses.text,
+          iconBg: colorClasses.bg
+        };
+      });
+
+    // Sort by value
+    spendingData.sort((a, b) => {
+      if (a.value === 0 && b.value === 0) return a.name.localeCompare(b.name);
+      if (a.value === 0) return 1;
+      if (b.value === 0) return -1;
+      return b.value - a.value;
+    });
+
+    // Set KPI values
+    totalBudgetWithIncome = calculatedTotalWithIncome;
+    totalBudgetKPI = calculatedTotalWithIncome;
+    remainingBudgetKPI = totalRemainingAmount;
+
+    remainingBudgetData = {
+      value: totalRemainingAmount,
+      formattedValue: fmt(totalRemainingAmount),
+      percentage: calculatedTotalWithIncome > 0 ? (totalRemainingAmount / calculatedTotalWithIncome) * 100 : 100
+    };
+  }
+
+  // Process data immediately on mount (no API calls!)
+  onMount(() => {
+    processServerData();
   });
-  
-  async function fetchPreferences() {
-    try {
-      const response = await fetch('/api/preferences', { credentials: 'include' });
-      const result = await response.json();
-      if (result.preferences?.currency) {
-        selectedCurrency = result.preferences.currency;
-      }
-    } catch (err) {
-      console.error('Failed to load preferences:', err);
-    }
-  }
-  
-  async function fetchBudgetData() {
-    loading = true;
-    try {
-      // Get current month/year
-      const now = new Date();
-      const month = now.getMonth() + 1;
-      const year = now.getFullYear();
-      
-      // Fetch budgets
-      const budgetResponse = await fetch(`/api/budgets?month=${month}&year=${year}`, {
-        credentials: 'include'
-      });
-      const budgetData = await budgetResponse.json();
-      
-      // Fetch transactions for this month
-      const startDate = new Date(year, month - 1, 1).toISOString().split('T')[0];
-      const endDate = new Date(year, month, 0).toISOString().split('T')[0];
-      const txResponse = await fetch(`/api/transactions?startDate=${startDate}&endDate=${endDate}`, {
-        credentials: 'include'
-      });
-      const txData = await txResponse.json();
-      
-      // Calculate income total and spending by category
-      let incomeTotal = 0;
-      const spentByCategory: Record<string, number> = {};
 
-      if (txData.transactions) {
-        for (const tx of txData.transactions) {
-          if (tx.type === 'income') {
-            incomeTotal += tx.amount;
-          } else if (tx.type === 'expense') {
-            const catName = tx.categoryName || 'Other';
-            spentByCategory[catName] = (spentByCategory[catName] || 0) + tx.amount;
-          }
-        }
-      }
-
-      if (budgetData.budgets) {
-        budgets = budgetData.budgets.map((b: any) => ({
-          ...b,
-          spent: spentByCategory[b.categoryName] || 0
-        }));
-      }
-
-      // Total budget = budget limits + income
-      const budgetLimits = budgets.reduce((sum, b) => sum + b.limitAmount, 0);
-      const calculatedTotalWithIncome = budgetLimits + incomeTotal;
-      // Include all spending from spentByCategory (including unbudgeted like 'Other')
-      const totalSpentAmount = Object.values(spentByCategory).reduce((sum, amount) => sum + amount, 0);
-      const totalRemainingAmount = calculatedTotalWithIncome - totalSpentAmount;
-
-      // Build chart data - show all budgeted categories with their spent amount
-      const curr = currencies[selectedCurrency];
-      spendingData = [];
-
-      // Add all budgeted categories with their spent amount (include even if spent is 0)
-      for (const b of budgets) {
-        // Skip 'Income' from expense chart - it's handled separately
-        if (b.categoryName === 'Income') continue;
-
-        spendingData.push({
-          name: b.categoryName,
-          value: b.spent,
-          percentage: calculatedTotalWithIncome > 0 ? (b.spent / calculatedTotalWithIncome) * 100 : 0,
-          color: b.categoryColor,
-          formattedValue: curr.symbol + ' ' + new Intl.NumberFormat(curr.locale).format(b.spent)
-        });
-      }
-
-      // Add 'Other' category if not in budgets (it's a default category that always exists)
-      const hasOtherBudget = budgets.some(b => b.categoryName === 'Other');
-      const otherSpent = spentByCategory['Other'] || 0;
-      if (!hasOtherBudget) {
-        spendingData.push({
-          name: 'Other',
-          value: otherSpent,
-          percentage: calculatedTotalWithIncome > 0 ? (otherSpent / calculatedTotalWithIncome) * 100 : 0,
-          color: '#6b7280',
-          formattedValue: curr.symbol + ' ' + new Intl.NumberFormat(curr.locale).format(otherSpent)
-        });
-      }
-
-      // Add 'Income' category if not in budgets (it's a default category that always exists)
-      const hasIncomeBudget = budgets.some(b => b.categoryName === 'Income');
-      if (!hasIncomeBudget) {
-        spendingData.push({
-          name: 'Income',
-          value: incomeTotal,
-          percentage: calculatedTotalWithIncome > 0 ? (incomeTotal / calculatedTotalWithIncome) * 100 : 0,
-          color: '#10b981',
-          formattedValue: curr.symbol + ' ' + new Intl.NumberFormat(curr.locale).format(incomeTotal)
-        });
-      }
-
-      // Add other unbudgeted spending (categories with spending but no budget)
-      for (const [catName, amount] of Object.entries(spentByCategory)) {
-        const hasBudget = budgets.some(b => b.categoryName === catName);
-        if (!hasBudget && catName !== 'Other' && catName !== 'Income' && amount > 0) {
-          spendingData.push({
-            name: catName,
-            value: amount,
-            percentage: calculatedTotalWithIncome > 0 ? (amount / calculatedTotalWithIncome) * 100 : 0,
-            color: '#6b7280', // Default gray for unbudgeted categories
-            formattedValue: curr.symbol + ' ' + new Intl.NumberFormat(curr.locale).format(amount)
-          });
-        }
-      }
-
-      // Populate recent expenses from transactions (limit to 5 most recent)
-      if (txData.transactions) {
-        recentExpenses = txData.transactions
-          .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
-          .slice(0, 5)
-          .map((tx: any) => {
-            // Get category info
-            const category = budgets.find(b => b.categoryName === tx.categoryName);
-            const icon = tx.categoryIcon || category?.categoryIcon || 'receipt';
-            const color = tx.categoryColor || category?.categoryColor || '#6b7280';
-
-            // Generate Tailwind classes from color
-            // Since we can't use arbitrary values dynamically, use a mapping
-            const colorClassMap: Record<string, { bg: string; text: string }> = {
-              '#21c462': { bg: 'bg-green-500/20', text: 'text-green-500' },
-              '#10b981': { bg: 'bg-emerald-500/20', text: 'text-emerald-500' },
-              '#3b82f6': { bg: 'bg-blue-500/20', text: 'text-blue-500' },
-              '#f59e0b': { bg: 'bg-amber-500/20', text: 'text-amber-500' },
-              '#ef4444': { bg: 'bg-red-500/20', text: 'text-red-500' },
-              '#8b5cf6': { bg: 'bg-violet-500/20', text: 'text-violet-500' },
-              '#ec4899': { bg: 'bg-pink-500/20', text: 'text-pink-500' },
-              '#06b6d4': { bg: 'bg-cyan-500/20', text: 'text-cyan-500' },
-              '#f97316': { bg: 'bg-orange-500/20', text: 'text-orange-500' },
-              '#6366f1': { bg: 'bg-indigo-500/20', text: 'text-indigo-500' },
-              '#84cc16': { bg: 'bg-lime-500/20', text: 'text-lime-500' },
-              '#14b8a6': { bg: 'bg-teal-500/20', text: 'text-teal-500' }
-            };
-
-            const colorClasses = colorClassMap[color.toLowerCase()] || { bg: 'bg-gray-500/20', text: 'text-gray-500' };
-
-            return {
-              id: tx.id,
-              payee: tx.payee || 'No description',
-              amount: tx.amount,
-              date: tx.date,
-              icon: icon,
-              iconColor: colorClasses.text,
-              iconBg: colorClasses.bg
-            };
-          });
-      }
-
-      // Sort by value (descending) - but keep zero-value budgets at the end
-      spendingData.sort((a, b) => {
-        if (a.value === 0 && b.value === 0) return a.name.localeCompare(b.name);
-        if (a.value === 0) return 1;
-        if (b.value === 0) return -1;
-        return b.value - a.value;
-      });
-
-      // Store total with income for chart display
-      totalBudgetWithIncome = calculatedTotalWithIncome;
-
-      // Set KPI values (include income for consistency with chart)
-      totalBudgetKPI = calculatedTotalWithIncome;
-      remainingBudgetKPI = totalRemainingAmount;
-
-      remainingBudgetData = {
-        value: totalRemainingAmount,
-        formattedValue: curr.symbol + ' ' + new Intl.NumberFormat(curr.locale).format(totalRemainingAmount),
-        percentage: calculatedTotalWithIncome > 0 ? (totalRemainingAmount / calculatedTotalWithIncome) * 100 : 100
-      };
-    } catch (err) {
-      console.error('Failed to load budget data:', err);
-    } finally {
-      loading = false;
-    }
-  }
-  
   // Handle color change from chart
   async function handleColorChange(categoryName: string, color: string) {
     try {
@@ -248,25 +267,23 @@
         credentials: 'include',
         body: JSON.stringify({ categoryName, color })
       });
-      
+
       const result = await response.json();
-      
+
       if (result.success) {
-        // Update local data immediately
-        spendingData = spendingData.map(item => 
+        spendingData = spendingData.map(item =>
           item.name === categoryName ? { ...item, color } : item
         );
-        console.log(`Color updated for ${categoryName}: ${color}`);
       }
     } catch (err) {
       console.error('Failed to update color:', err);
     }
   }
-  
+
   function formatAmount(amount: number): string {
     if (amount === 0 && totalBudgetKPI === 0) return '-';
     const curr = currencies[selectedCurrency];
-    return curr.symbol + ' ' + new Intl.NumberFormat(curr.locale).format(amount);
+    return curr.symbol + ' ' + formatNumber(amount, curr.locale);
   }
 </script>
 
@@ -296,7 +313,7 @@
     icon="account_balance"
     iconColor={remainingBudgetKPI >= 0 ? 'green' : 'red'}
   />
-  
+
   <KPICard
     title="Overspent Categories"
     value={overspentCategories > 0 ? `${overspentCategories} Categories` : 'None'}
@@ -328,8 +345,8 @@
         <p class="text-text-muted text-center max-w-sm">
           Go to Budget page or use AI Coach to set up your monthly budget
         </p>
-        <a 
-          href="/budget" 
+        <a
+          href="/budget"
           class="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white font-medium hover:bg-primary-hover transition-colors"
         >
           <span class="material-symbols-outlined">add</span>
@@ -338,7 +355,7 @@
       </div>
     {/if}
   </div>
-  
+
   <!-- Recent Expenses (1 column) -->
   <div class="lg:col-span-1">
     {#if recentExpenses.length > 0}

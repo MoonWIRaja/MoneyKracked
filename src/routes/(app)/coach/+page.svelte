@@ -54,6 +54,12 @@
   let showSidebar = $state(true);
   let selectedSessionId = $state<string | null>(null);
 
+  // Delete session confirmation
+  let showDeleteSessionModal = $state(false);
+  let deletingSessionId = $state<string | null>(null);
+  let deletingSession = $state(false);
+  let deleteSessionError = $state('');
+
   // Default suggestions while loading
   const defaultSuggestions = [
     "Setup my budget, salary RM4500",
@@ -62,10 +68,12 @@
     "Tips to reduce my expenses"
   ];
 
-  // Load smart suggestions on mount
+  // Load smart suggestions and chat history in parallel for faster loading
   onMount(async () => {
-    await loadSuggestions();
-    await loadChatHistory();
+    await Promise.all([
+      loadSuggestions(),
+      loadChatHistory()
+    ]);
   });
 
   async function loadSuggestions() {
@@ -107,9 +115,13 @@
             sentiment: s.sentiment
           }));
         }
+      } else {
+        // Silently fail - no history is fine
+        chatSessions = [];
       }
     } catch (err) {
       console.error('Load chat history error:', err);
+      chatSessions = [];
     } finally {
       isLoadingSessions = false;
     }
@@ -333,6 +345,52 @@
   function formatAmount(amount: number): string {
     return 'RM ' + amount.toLocaleString();
   }
+
+  // Delete session functions
+  function initiateDeleteSession(sessionId: string) {
+    deletingSessionId = sessionId;
+    showDeleteSessionModal = true;
+    deleteSessionError = '';
+  }
+
+  async function confirmDeleteSession() {
+    if (!deletingSessionId) return;
+
+    deletingSession = true;
+    deleteSessionError = '';
+
+    try {
+      const response = await fetch(`/api/ai-chat?sessionId=${deletingSessionId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Remove from local list
+        chatSessions = chatSessions.filter(s => s.sessionId !== deletingSessionId);
+        showDeleteSessionModal = false;
+
+        // If we deleted the currently selected session, start new chat
+        if (selectedSessionId === deletingSessionId) {
+          startNewChat();
+        }
+      } else {
+        throw new Error(data.error);
+      }
+    } catch (err: any) {
+      deleteSessionError = err.message || 'Failed to delete chat';
+    } finally {
+      deletingSession = false;
+    }
+  }
+
+  function cancelDeleteSession() {
+    showDeleteSessionModal = false;
+    deletingSessionId = null;
+    deleteSessionError = '';
+  }
 </script>
 
 <svelte:head>
@@ -346,6 +404,71 @@
 />
 
 <div class="flex gap-4 h-[calc(100vh-220px)] lg:h-[calc(100vh-180px)]">
+  <!-- Chat History Sidebar (Left side like ChatGPT) -->
+  <div class="w-72 flex-shrink-0">
+    <Card padding="none" class="h-full flex flex-col">
+      <!-- Sidebar Header -->
+      <div class="p-4 border-b border-border-dark">
+        <button
+          onclick={startNewChat}
+          class="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-white font-medium hover:bg-primary-hover transition-colors"
+        >
+          <span class="material-symbols-outlined text-lg">add</span>
+          New Chat
+        </button>
+      </div>
+
+      <!-- Sessions List -->
+      <div class="flex-1 overflow-y-auto p-2">
+        {#if isLoadingSessions}
+          <div class="flex items-center justify-center py-8">
+            <div class="inline-block animate-spin rounded-full h-6 w-6 border-2 border-primary border-t-transparent"></div>
+          </div>
+        {:else if chatSessions.length === 0}
+          <div class="text-center py-8 px-4">
+            <span class="material-symbols-outlined text-4xl text-text-muted mb-2">history</span>
+            <p class="text-sm text-text-muted">No chat history yet</p>
+            <p class="text-xs text-text-muted mt-1">Start a conversation to see it here</p>
+          </div>
+        {:else}
+          <div class="space-y-1">
+            {#each chatSessions as session}
+              <div class="group flex items-center gap-1 rounded-lg hover:bg-surface-dark transition-colors {selectedSessionId === session.sessionId ? 'bg-surface-dark' : ''}">
+                <button
+                  onclick={() => loadSessionMessages(session.sessionId)}
+                  class="flex-1 text-left p-3 rounded-lg"
+                >
+                  <div class="flex items-start gap-2">
+                    <span class="material-symbols-outlined text-lg text-text-secondary flex-shrink-0 mt-0.5">
+                      {session.sentiment === 'positive' ? 'sentiment_satisfied' :
+                       session.sentiment === 'stressed' ? 'sentiment_stressed' :
+                       session.sentiment === 'negative' ? 'sentiment_dissatisfied' :
+                       'chat_bubble'}
+                    </span>
+                    <div class="min-w-0 flex-1">
+                      <p class="text-sm font-medium text-white truncate">{session.title}</p>
+                      <p class="text-xs text-text-muted truncate">{session.summary}</p>
+                      <p class="text-xs text-text-muted mt-1">
+                        {formatSessionDate(session.lastMessageAt)}
+                      </p>
+                    </div>
+                  </div>
+                </button>
+                <button
+                  onclick={() => initiateDeleteSession(session.sessionId)}
+                  class="opacity-0 group-hover:opacity-100 p-2 text-text-muted hover:text-danger transition-all flex-shrink-0"
+                  title="Delete chat"
+                >
+                  <span class="material-symbols-outlined text-lg">delete</span>
+                </button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </Card>
+  </div>
+
   <!-- Main Chat Area -->
   <div class="flex-1 flex flex-col min-w-0">
     <!-- Chat Messages -->
@@ -475,60 +598,62 @@
     </div>
   </Card>
   </div>
+</div>
 
-  <!-- Chat History Sidebar -->
-  <div class="w-72 flex-shrink-0">
-    <Card padding="none" class="h-full flex flex-col">
-      <!-- Sidebar Header -->
-      <div class="p-4 border-b border-border-dark">
-        <button
-          onclick={startNewChat}
-          class="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-white font-medium hover:bg-primary-hover transition-colors"
-        >
-          <span class="material-symbols-outlined text-lg">add</span>
-          New Chat
-        </button>
-      </div>
+<!-- Delete Chat Confirmation Modal -->
+{#if showDeleteSessionModal}
+  <div class="fixed inset-0 z-[60] flex items-center justify-center">
+    <!-- Backdrop -->
+    <div
+      class="absolute inset-0 bg-black/60 backdrop-blur-sm"
+      role="button"
+      tabindex="-1"
+      onclick={cancelDeleteSession}
+      onkeydown={(e) => e.key === 'Escape' && cancelDeleteSession()}
+    ></div>
 
-      <!-- Sessions List -->
-      <div class="flex-1 overflow-y-auto p-2">
-        {#if isLoadingSessions}
-          <div class="flex items-center justify-center py-8">
-            <div class="inline-block animate-spin rounded-full h-6 w-6 border-2 border-primary border-t-transparent"></div>
-          </div>
-        {:else if chatSessions.length === 0}
-          <div class="text-center py-8 px-4">
-            <span class="material-symbols-outlined text-4xl text-text-muted mb-2">history</span>
-            <p class="text-sm text-text-muted">No chat history yet</p>
-            <p class="text-xs text-text-muted mt-1">Start a conversation to see it here</p>
-          </div>
-        {:else}
-          <div class="space-y-1">
-            {#each chatSessions as session}
-              <button
-                onclick={() => loadSessionMessages(session.sessionId)}
-                class="w-full text-left p-3 rounded-lg hover:bg-surface-dark transition-colors {selectedSessionId === session.sessionId ? 'bg-surface-dark border border-primary/30' : ''}"
-              >
-                <div class="flex items-start gap-2">
-                  <span class="material-symbols-outlined text-lg text-text-secondary flex-shrink-0 mt-0.5">
-                    {session.sentiment === 'positive' ? 'sentiment_satisfied' :
-                     session.sentiment === 'stressed' ? 'sentiment_stressed' :
-                     session.sentiment === 'negative' ? 'sentiment_dissatisfied' :
-                     'chat_bubble'}
-                  </span>
-                  <div class="min-w-0 flex-1">
-                    <p class="text-sm font-medium text-white truncate">{session.title}</p>
-                    <p class="text-xs text-text-muted truncate">{session.summary}</p>
-                    <p class="text-xs text-text-muted mt-1">
-                      {formatSessionDate(session.lastMessageAt)}
-                    </p>
-                  </div>
-                </div>
-              </button>
-            {/each}
+    <!-- Modal Content -->
+    <div class="relative bg-surface-bg border border-border-dark rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
+      <div class="p-6">
+        <!-- Warning Icon -->
+        <div class="flex items-center justify-center w-12 h-12 rounded-full bg-danger/10 mx-auto mb-4">
+          <span class="material-symbols-outlined text-danger text-2xl">delete</span>
+        </div>
+
+        <h3 class="text-lg font-bold text-white text-center mb-2">Delete Chat?</h3>
+
+        <p class="text-sm text-text-muted text-center mb-4">
+          This will permanently delete this chat and all its messages. This action cannot be undone.
+        </p>
+
+        {#if deleteSessionError}
+          <div class="bg-danger/10 border border-danger/30 rounded-lg p-3 mb-4">
+            <p class="text-sm text-danger text-center">{deleteSessionError}</p>
           </div>
         {/if}
+
+        <div class="flex gap-3">
+          <button
+            onclick={cancelDeleteSession}
+            disabled={deletingSession}
+            class="flex-1 px-4 py-2.5 rounded-lg bg-bg-dark border border-border-dark text-white font-medium hover:bg-surface-dark transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onclick={confirmDeleteSession}
+            disabled={deletingSession}
+            class="flex-1 px-4 py-2.5 rounded-lg bg-danger text-white font-medium hover:bg-danger-hover transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {#if deletingSession}
+              <div class="inline-block animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
+              <span>Deleting...</span>
+            {:else}
+              <span>Delete</span>
+            {/if}
+          </button>
+        </div>
       </div>
-    </Card>
+    </div>
   </div>
-</div>
+{/if}

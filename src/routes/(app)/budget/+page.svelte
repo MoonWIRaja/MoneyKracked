@@ -3,15 +3,29 @@
   import { Card, Button, Input } from '$lib/components/ui';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  
+  import { type Currency } from '$lib/utils/currency';
+  import { getExchangeRates, getUserPreferences, convertAmountMYR, getCachedRatesSync, getCachedPreferencesSync } from '$lib/stores/app-store';
+
   // Currency settings
   const currencies: Record<string, { symbol: string; name: string; locale: string }> = {
     'MYR': { symbol: 'RM', name: 'Malaysian Ringgit', locale: 'en-MY' },
     'SGD': { symbol: 'S$', name: 'Singapore Dollar', locale: 'en-SG' },
     'USD': { symbol: '$', name: 'US Dollar', locale: 'en-US' }
   };
-  
-  let selectedCurrency = $state('MYR');
+
+  // PERFORMANCE: Cached formatters for each currency
+  const formatters = {
+    'en-MY': new Intl.NumberFormat('en-MY'),
+    'en-SG': new Intl.NumberFormat('en-SG'),
+    'en-US': new Intl.NumberFormat('en-US')
+  };
+
+  function formatNumber(amount: number, locale: string): string {
+    return formatters[locale as keyof typeof formatters]?.format(amount) || amount.toLocaleString();
+  }
+
+  let selectedCurrency = $state<Currency>('MYR');
+  let exchangeRates: Record<string, Record<string, number>> = $state({});
   
   interface Budget {
     id: string;
@@ -88,26 +102,57 @@
   ];
   
   // Fetch user preferences (currency)
-  async function fetchPreferences() {
-    try {
-      const response = await fetch('/api/preferences', {
-        credentials: 'include'
-      });
-      const result = await response.json();
-      if (result.preferences?.currency) {
-        selectedCurrency = result.preferences.currency;
-        console.log('[Budget] Currency loaded:', selectedCurrency);
-      }
-    } catch (err) {
-      console.error('[Budget] Failed to load preferences:', err);
-    }
-  }
-  
-  // Fetch budgets on mount and when month changes
+  // PERFORMANCE: Use shared store for faster loading (cached from layout preload)
+  // First try synchronous cache (instant if preloaded), then async fetch if needed
   onMount(async () => {
-    await fetchPreferences();
+    // Try to get cached data instantly (from layout preload)
+    const cachedRates = getCachedRatesSync();
+    const cachedPrefs = getCachedPreferencesSync();
+
+    if (cachedRates) {
+      exchangeRates = cachedRates;
+    }
+    if (cachedPrefs?.currency) {
+      selectedCurrency = cachedPrefs.currency;
+    }
+
+    // Fetch if not cached (should be rare due to layout preload)
+    const [rates, prefs] = await Promise.all([
+      cachedRates ? cachedRates : getExchangeRates(),
+      cachedPrefs ? cachedPrefs : getUserPreferences()
+    ]);
+
+    if (!cachedRates) {
+      exchangeRates = rates;
+    }
+    if (!cachedPrefs && prefs?.currency) {
+      selectedCurrency = prefs.currency;
+    }
+
     await loadBudgets();
   });
+
+  // Convert amount from MYR to selected currency
+  function convertAmount(amountMYR: number): number {
+    return convertAmountMYR(amountMYR, selectedCurrency, exchangeRates);
+  }
+
+  // Convert amount from selected currency back to MYR (for saving to database)
+  function convertToMYR(amount: number): number {
+    if (selectedCurrency === 'MYR') return amount;
+
+    const rate = exchangeRates.MYR?.[selectedCurrency];
+    if (rate && rate > 0) {
+      return Math.round((amount / rate) * 100) / 100;
+    }
+    // Fallback default rates
+    const defaultRates: Record<string, number> = { SGD: 0.31, USD: 0.22 };
+    const fallbackRate = defaultRates[selectedCurrency];
+    if (fallbackRate && fallbackRate > 0) {
+      return Math.round((amount / fallbackRate) * 100) / 100;
+    }
+    return amount;
+  }
   
   $effect(() => {
     // Re-load when month/year changes
@@ -158,7 +203,8 @@
       if (data.budgets) {
         budgets = data.budgets.map((b: any) => ({
           ...b,
-          spent: spentByCategory[b.categoryName] || 0
+          limitAmount: convertAmount(b.limitAmount), // Convert budget limit to selected currency
+          spent: convertAmount(spentByCategory[b.categoryName] || 0) // Convert spent to selected currency
         }));
 
         // Add "Other" category as unlimited (always shown)
@@ -168,7 +214,7 @@
           categoryIcon: 'category',
           categoryColor: '#6b7280',
           limitAmount: -1, // -1 = unlimited
-          spent: otherSpent
+          spent: convertAmount(otherSpent) // Convert to selected currency
         });
 
         // Add "Income" category (always shown, increases remaining)
@@ -178,7 +224,7 @@
           categoryIcon: 'payments',
           categoryColor: '#10b981',
           limitAmount: -1, // -1 = unlimited (income adds to remaining)
-          spent: incomeTotal
+          spent: convertAmount(incomeTotal) // Convert to selected currency
         });
       }
     } catch (err: any) {
@@ -205,7 +251,7 @@
         credentials: 'include',
         body: JSON.stringify({
           categoryName: newBudget.categoryName,
-          amount: parseFloat(newBudget.amount),
+          amount: convertToMYR(parseFloat(newBudget.amount)), // Convert to MYR for database
           period: newBudget.period,
           month: selectedMonth + 1,
           year: selectedYear
@@ -306,7 +352,7 @@
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          amount: parseFloat(editBudget.amount),
+          amount: convertToMYR(parseFloat(editBudget.amount)), // Convert to MYR for database
           period: editBudget.period
         })
       });
@@ -348,7 +394,7 @@
   
   function formatAmount(amount: number): string {
     const curr = currencies[selectedCurrency];
-    return curr.symbol + ' ' + new Intl.NumberFormat(curr.locale).format(amount);
+    return curr.symbol + ' ' + formatNumber(amount, curr.locale);
   }
   
   function getPercentage(spent: number, limit: number): number {
