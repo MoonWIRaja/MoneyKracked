@@ -475,6 +475,76 @@
     linkSuccess = 'Code copied!';
     setTimeout(() => linkSuccess = '', 2000);
   }
+
+  // ===== Delete Account =====
+  let showDeleteAccount = $state(false);
+  let deleteStep = $state<'confirm' | 'password' | 'final'>('confirm');
+  let deletePassword = $state('');
+  let deleteConfirmed = $state(false);
+  let deleteLoading = $state(false);
+  let deleteError = $state('');
+
+  function openDeleteAccount() {
+    showDeleteAccount = true;
+    deleteStep = 'confirm';
+    deletePassword = '';
+    deleteConfirmed = false;
+    deleteError = '';
+  }
+
+  function closeDeleteAccount() {
+    showDeleteAccount = false;
+    deleteStep = 'confirm';
+    deletePassword = '';
+    deleteConfirmed = false;
+    deleteError = '';
+  }
+
+  async function proceedToDelete() {
+    deleteError = '';
+    if (deleteStep === 'confirm') {
+      deleteStep = 'password';
+    } else if (deleteStep === 'password') {
+      if (!deletePassword) {
+        deleteError = 'Please enter your password';
+        return;
+      }
+      deleteStep = 'final';
+    }
+  }
+
+  async function confirmDeleteAccount() {
+    if (!deleteConfirmed) {
+      deleteError = 'Please confirm that you want to delete your account';
+      return;
+    }
+
+    deleteLoading = true;
+    deleteError = '';
+
+    try {
+      const response = await fetch('/api/delete-account', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ password: deletePassword })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        // Redirect to home after successful deletion
+        window.location.href = '/?accountDeleted=true';
+      } else {
+        throw new Error(result.error || 'Failed to delete account');
+      }
+    } catch (err: any) {
+      console.error('[Settings] Delete account error:', err);
+      deleteError = err.message || 'Failed to delete account';
+    } finally {
+      deleteLoading = false;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -714,7 +784,7 @@
     <Card padding="lg">
       <h3 class="text-lg font-bold text-danger mb-4">Danger Zone</h3>
       <p class="text-text-muted mb-4">Once you delete your account, there is no going back. Please be certain.</p>
-      <Button variant="danger">Delete Account</Button>
+      <Button variant="danger" onclick={openDeleteAccount}>Delete Account</Button>
     </Card>
   </div>
 </div>
@@ -894,6 +964,132 @@
               Disable 2FA
             </Button>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Delete Account Modal -->
+{#if showDeleteAccount}
+  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
+    <div class="bg-surface-dark rounded-2xl border border-border-dark shadow-2xl max-w-md w-full">
+      <div class="p-6">
+        <div class="flex items-center justify-between mb-6">
+          <h3 class="text-lg font-bold text-danger">Delete Account</h3>
+          <button onclick={closeDeleteAccount} class="text-text-muted hover:text-white">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <div class="space-y-4">
+          {#if deleteStep === 'confirm'}
+            <!-- Step 1: Warning & Confirm -->
+            <div class="space-y-4">
+              <div class="p-4 bg-danger/10 border border-danger/30 rounded-lg">
+                <div class="flex items-start gap-3">
+                  <span class="material-symbols-outlined text-danger text-xl">warning</span>
+                  <div>
+                    <p class="font-medium text-white">This action cannot be undone!</p>
+                    <p class="text-sm text-text-muted mt-1">
+                      All your data including transactions, budgets, goals, and settings will be permanently deleted.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <p class="text-sm text-text-muted">
+                To proceed with deleting your account, you'll need to confirm your identity and password.
+              </p>
+
+              <div class="flex gap-3">
+                <Button variant="secondary" class="flex-1" onclick={closeDeleteAccount}>
+                  Cancel
+                </Button>
+                <Button variant="danger" class="flex-1" onclick={proceedToDelete}>
+                  Continue
+                </Button>
+              </div>
+            </div>
+
+          {:else if deleteStep === 'password'}
+            <!-- Step 2: Enter Password -->
+            <div class="space-y-4">
+              <p class="text-sm text-text-muted">
+                Please enter your password to verify your identity before deleting your account.
+              </p>
+
+              <div>
+                <label for="delete-password" class="block text-sm font-medium text-white mb-2">Password</label>
+                <input
+                  id="delete-password"
+                  type="password"
+                  bind:value={deletePassword}
+                  placeholder="Enter your password"
+                  class="w-full bg-bg-dark border border-border-dark rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-danger"
+                />
+              </div>
+
+              {#if deleteError}
+                <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm">
+                  {deleteError}
+                </div>
+              {/if}
+
+              <div class="flex gap-3">
+                <Button variant="secondary" class="flex-1" onclick={closeDeleteAccount}>
+                  Cancel
+                </Button>
+                <Button variant="danger" class="flex-1" onclick={proceedToDelete}>
+                  Continue
+                </Button>
+              </div>
+            </div>
+
+          {:else if deleteStep === 'final'}
+            <!-- Step 3: Final Confirmation -->
+            <div class="space-y-4">
+              <div class="p-4 bg-danger/10 border border-danger/30 rounded-lg">
+                <p class="font-medium text-danger text-center">Last chance to cancel</p>
+                <p class="text-sm text-text-muted text-center mt-1">
+                  Once you confirm, your account will be permanently deleted.
+                </p>
+              </div>
+
+              <div class="flex items-center gap-3 p-3 bg-bg-dark rounded-lg border border-border-dark">
+                <input
+                  type="checkbox"
+                  bind:checked={deleteConfirmed}
+                  id="delete-confirm"
+                  class="w-5 h-5 rounded border-border-dark text-danger focus:ring-danger"
+                />
+                <label for="delete-confirm" class="text-sm text-white cursor-pointer">
+                  I understand that this action cannot be undone and I want to delete my account
+                </label>
+              </div>
+
+              {#if deleteError}
+                <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm">
+                  {deleteError}
+                </div>
+              {/if}
+
+              <div class="flex gap-3">
+                <Button variant="secondary" class="flex-1" onclick={closeDeleteAccount} disabled={deleteLoading}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  class="flex-1"
+                  onclick={confirmDeleteAccount}
+                  disabled={!deleteConfirmed || deleteLoading}
+                  loading={deleteLoading}
+                >
+                  {deleteLoading ? 'Deleting...' : 'Delete My Account'}
+                </Button>
+              </div>
+            </div>
+          {/if}
         </div>
       </div>
     </div>

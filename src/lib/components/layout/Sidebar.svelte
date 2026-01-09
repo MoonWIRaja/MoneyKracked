@@ -2,7 +2,7 @@
   import { page } from '$app/stores';
   import { signOut } from '$lib/auth-client';
   import { goto } from '$app/navigation';
-  
+
   interface Props {
     user: {
       name: string;
@@ -10,7 +10,7 @@
       image?: string | null;
     } | null;
   }
-  
+
   let { user }: Props = $props();
   let showProfileDrawer = $state(false);
   

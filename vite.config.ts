@@ -19,7 +19,10 @@ export default defineConfig(({ mode }) => {
 		server: {
 			port,
 			host: true,
-			allowedHosts: allowedHosts.length > 0 ? allowedHosts : undefined
+			allowedHosts: allowedHosts.length > 0 ? allowedHosts : undefined,
+			headers: {
+				'Cache-Control': 'no-store, no-cache, must-revalidate'
+			}
 		},
 		preview: {
 			port,

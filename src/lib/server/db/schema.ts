@@ -15,6 +15,10 @@ export const user = pgTable('user', {
   name: text('name').notNull(),
   emailVerified: boolean('email_verified').default(false),
   image: text('image'),
+  // Two-Factor Authentication (2FA) fields
+  twoFactorEnabled: boolean('two_factor_enabled').default(false),
+  twoFactorSecret: text('two_factor_secret'), // Encrypted TOTP secret
+  twoFactorBackupCodes: jsonb('two_factor_backup_codes'), // Array of backup codes
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull()
 });

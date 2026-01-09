@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npm run db:push:*)",
+      "Bash(npm run)",
+      "Bash(npm uninstall:*)",
+      "Bash(node -e \"console.log\\(require\\(''otpauth''\\)\\)\")",
+      "Bash(psql:*)",
+      "Bash(node scripts/run-migration-2fa:*)",
+      "Bash(if exist \"scripts\\\\run-migration-2fa.js\" move \"scripts\\\\run-migration-2fa.js\" \"scripts\\\\run-migration-2fa.cjs\")",
+      "Bash(npm run dev)",
+      "Bash(cat:*)",
+      "Bash(timeout 15 npm run dev:*)",
+      "Bash(node:*)",
+      "Bash(timeout 20 npm run dev:*)",
+      "Bash(netstat:*)",
+      "Bash(head:*)",
+      "Bash(taskkill:*)",
+      "Bash(npm update:*)"
+    ]
+  }
+}

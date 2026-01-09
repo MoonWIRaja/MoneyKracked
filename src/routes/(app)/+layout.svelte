@@ -11,7 +11,7 @@
         image?: string | null;
       } | null;
     };
-    children?: Snippet;
+    children: Snippet;
   }
 
   let { data, children }: Props = $props();
@@ -24,10 +24,9 @@
   <!-- Main Content Area -->
   <main class="flex-1 overflow-y-auto bg-bg-dark p-4 lg:p-8">
     <div class="mx-auto max-w-6xl flex flex-col gap-8">
-      {#if children}
-        {@render children()}
-      {/if}
+      {@render children()}
     </div>
   </main>
 </div>
+
 

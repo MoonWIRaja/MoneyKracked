@@ -48,7 +48,7 @@
 
 <button
   {type}
-  disabled={disabled || loading}
+  {disabled}
   class="{baseStyles} {variants[variant]} {sizes[size]} {className}"
   onclick={onclick}
 >

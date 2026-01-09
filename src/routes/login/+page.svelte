@@ -152,6 +152,47 @@
     // Redirect to unified GitHub OAuth endpoint in login mode
     window.location.href = '/api/github-oauth?mode=login&callbackURL=/dashboard';
   }
+
+  let resendLoading = $state(false);
+  let resendSuccess = $state(false);
+
+  async function resendVerificationEmail() {
+    resendLoading = true;
+    resendSuccess = false;
+
+    try {
+      const isEmail = identifier.includes('@');
+
+      if (!isEmail) {
+        error = 'Please enter your email address to resend verification email.';
+        resendLoading = false;
+        return;
+      }
+
+      const response = await fetch('/api/resend-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: identifier })
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        resendSuccess = true;
+        error = '';
+        // Clear success message after 5 seconds
+        setTimeout(() => {
+          resendSuccess = false;
+        }, 5000);
+      } else {
+        error = result.error || 'Failed to resend verification email.';
+      }
+    } catch (err: any) {
+      error = err.message || 'Failed to resend verification email.';
+    } finally {
+      resendLoading = false;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -240,9 +281,34 @@
         <h2 class="text-xl font-bold text-white mb-6">Welcome back</h2>
 
         {#if error}
-          <div class="mb-4 p-3 rounded-lg bg-danger/10 border border-danger/20 text-danger text-sm flex items-start gap-2">
-            <span class="material-symbols-outlined text-lg flex-shrink-0">error</span>
-            <span>{error}</span>
+          <div class="mb-4 p-3 rounded-lg bg-danger/10 border border-danger/20 text-danger text-sm">
+            <div class="flex items-start gap-2">
+              <span class="material-symbols-outlined text-lg flex-shrink-0">error</span>
+              <span class="flex-1">{error}</span>
+            </div>
+            {#if error.includes('verify your email')}
+              <button
+                type="button"
+                class="mt-2 text-xs font-medium underline hover:no-underline flex items-center gap-1 text-danger"
+                onclick={resendVerificationEmail}
+                disabled={resendLoading}
+              >
+                {#if resendLoading}
+                  <span class="material-symbols-outlined text-sm animate-spin">refresh</span>
+                  Sending...
+                {:else}
+                  <span class="material-symbols-outlined text-sm">send</span>
+                  Resend verification email
+                {/if}
+              </button>
+            {/if}
+          </div>
+        {/if}
+
+        {#if resendSuccess}
+          <div class="mb-4 p-3 rounded-lg bg-success/10 border border-success/20 text-success text-sm flex items-center gap-2">
+            <span class="material-symbols-outlined text-lg">check_circle</span>
+            <span>Verification email sent! Check your inbox.</span>
           </div>
         {/if}
 

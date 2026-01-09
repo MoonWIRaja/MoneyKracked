@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button } from '$lib/components/ui';
-  
+
   interface Props {
     title: string;
     subtitle?: string;
@@ -8,15 +8,15 @@
     showAddButton?: boolean;
     onAddClick?: () => void;
   }
-  
-  let { 
-    title, 
-    subtitle, 
-    showDatePicker = false, 
+
+  let {
+    title,
+    subtitle,
+    showDatePicker = false,
     showAddButton = false,
-    onAddClick 
+    onAddClick
   }: Props = $props();
-  
+
   // Get current month/year
   const currentDate = new Date();
   const monthYear = currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -40,10 +40,7 @@
       {/if}
       
       {#if showAddButton}
-        <Button onclick={onAddClick}>
-          {#snippet icon()}
-            <span class="material-symbols-outlined text-lg">add</span>
-          {/snippet}
+        <Button onclick={onAddClick} icon="add">
           Add Transaction
         </Button>
       {/if}
