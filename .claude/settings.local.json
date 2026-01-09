@@ -17,7 +17,9 @@
       "Bash(netstat:*)",
       "Bash(head:*)",
       "Bash(taskkill:*)",
-      "Bash(npm update:*)"
+      "Bash(npm update:*)",
+      "Bash(npx drizzle-kit push:pg:*)",
+      "Bash(npx drizzle-kit push:*)"
     ]
   }
 }

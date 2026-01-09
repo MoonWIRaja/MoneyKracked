@@ -2,14 +2,14 @@
   import { Header } from '$lib/components/layout';
   import { Card, Button } from '$lib/components/ui';
   import { onMount } from 'svelte';
-  
+
   interface BudgetAction {
     action: 'create' | 'update' | 'delete';
     categoryName: string;
     amount: number;
     period: 'monthly' | 'weekly' | 'yearly';
   }
-  
+
   interface Message {
     id: string;
     role: 'user' | 'assistant';
@@ -17,53 +17,84 @@
     timestamp: Date;
     budgetActions?: BudgetAction[];
   }
-  
+
   let messages = $state<Message[]>([
     {
       id: '1',
       role: 'assistant',
-      content: "Hi! I'm your AI Budget Coach 🤖\n\nI can help you with:\n• **Setup your budget** - Tell me your salary and I'll create a budget plan\n• **Add specific budgets** - Like motorcycle loans, rent, etc.\n• **Analyze spending** - I'll review your transactions and give tips\n\nTry saying: \"Setup my budget, salary RM4500\" or \"Add motorcycle loan RM350/month\"",
+      content: "Hi! I'm **MonKrac** 🤖\n\nYour expert Financial Coach & Budget Advisor specializing in Malaysian personal finance.\n\nI have a **memory** and I **learn** from our conversations! The more we talk, the better I can help you.\n\nI can help you with:\n• **Setup your budget** - Tell me your salary and I'll create a personalized budget plan\n• **Analyze spending** - I'll review all your transactions and give smart tips\n• **Savings strategies** - Build emergency funds and achieve your financial goals\n• **Debt management** - Get advice on managing loans, credit cards, and PTPTN\n\nTry saying: \"Setup my budget, salary RM4500\" or \"Analyze my spending\"",
       timestamp: new Date()
     }
   ]);
-  
+
   let input = $state('');
   let isLoading = $state(false);
   let pendingActions = $state<BudgetAction[] | null>(null);
   let applyingBudgets = $state(false);
-  
-  const suggestions = [
+  let sessionId = $state<string>(crypto.randomUUID());
+  let learnedInfo = $state<string | null>(null);
+  let suggestions = $state<string[]>([]);
+  let isLoadingSuggestions = $state(true);
+
+  // Default suggestions while loading
+  const defaultSuggestions = [
     "Setup my budget, salary RM4500",
-    "Add motorcycle loan RM350/month",
+    "Analyze my spending",
     "Help me save 20% of my income",
-    "Analyze my spending"
+    "Tips to reduce my expenses"
   ];
-  
+
+  // Load smart suggestions on mount
+  onMount(async () => {
+    await loadSuggestions();
+  });
+
+  async function loadSuggestions() {
+    isLoadingSuggestions = true;
+    try {
+      const response = await fetch('/api/ai-chat?type=suggestions', {
+        credentials: 'include'
+      });
+      if (response.ok) {
+        const data = await response.json();
+        suggestions = data.suggestions || defaultSuggestions;
+      } else {
+        suggestions = defaultSuggestions;
+      }
+    } catch (err) {
+      console.error('Load suggestions error:', err);
+      suggestions = defaultSuggestions;
+    } finally {
+      isLoadingSuggestions = false;
+    }
+  }
+
   async function sendMessage() {
     if (!input.trim() || isLoading) return;
-    
+
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: 'user',
       content: input.trim(),
       timestamp: new Date()
     };
-    
+
     messages = [...messages, userMessage];
     const userInput = input;
     input = '';
     isLoading = true;
-    
+    learnedInfo = null;
+
     try {
       const response = await fetch('/api/ai-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ message: userInput })
+        body: JSON.stringify({ message: userInput, sessionId })
       });
-      
+
       const data = await response.json();
-      
+
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
         role: 'assistant',
@@ -71,14 +102,31 @@
         timestamp: new Date(),
         budgetActions: data.budgetActions
       };
-      
+
       messages = [...messages, assistantMessage];
-      
+
+      // Update session ID for continuity
+      if (data.sessionId) {
+        sessionId = data.sessionId;
+      }
+
+      // Show what AI learned
+      if (data.learnedProfile && Object.keys(data.learnedProfile).length > 0) {
+        const learned = data.learnedProfile;
+        const learnedBits: string[] = [];
+        if (learned.monthlyIncome) learnedBits.push(`income: RM${learned.monthlyIncome}`);
+        if (learned.spendingPersonality) learnedBits.push(`spending style: ${learned.spendingPersonality}`);
+        if (learned.primaryGoal) learnedBits.push(`goal: ${learned.primaryGoal}`);
+        if (learnedBits.length > 0) {
+          learnedInfo = `🧠 Learned: ${learnedBits.join(', ')}`;
+        }
+      }
+
       // If there are budget actions, show pending
       if (data.budgetActions && data.budgetActions.length > 0) {
         pendingActions = data.budgetActions;
       }
-      
+
     } catch (err) {
       console.error('Chat error:', err);
       const errorMessage: Message = {
@@ -90,20 +138,22 @@
       messages = [...messages, errorMessage];
     } finally {
       isLoading = false;
+      // Refresh suggestions after each message (they update based on popularity)
+      loadSuggestions();
     }
   }
-  
+
   async function applyBudgets() {
     if (!pendingActions || applyingBudgets) return;
-    
+
     applyingBudgets = true;
-    
+
     try {
       const response = await fetch('/api/budgets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           budgets: pendingActions.map(a => ({
             categoryName: a.categoryName,
             amount: a.amount,
@@ -111,9 +161,9 @@
           }))
         })
       });
-      
+
       const data = await response.json();
-      
+
       if (data.success) {
         const confirmMessage: Message = {
           id: crypto.randomUUID(),
@@ -126,7 +176,7 @@
       } else {
         throw new Error(data.error);
       }
-      
+
     } catch (err: any) {
       console.error('Apply budget error:', err);
       const errorMessage: Message = {
@@ -140,7 +190,7 @@
       applyingBudgets = false;
     }
   }
-  
+
   function cancelBudgets() {
     pendingActions = null;
     const cancelMessage: Message = {
@@ -151,29 +201,29 @@
     };
     messages = [...messages, cancelMessage];
   }
-  
+
   function useSuggestion(suggestion: string) {
     input = suggestion;
     sendMessage();
   }
-  
+
   function formatTime(date: Date): string {
     return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   }
-  
+
   function formatAmount(amount: number): string {
     return 'RM ' + amount.toLocaleString();
   }
 </script>
 
 <svelte:head>
-  <title>AI Coach - MoneyKracked</title>
+  <title>MonKrac AI Coach - MoneyKracked</title>
 </svelte:head>
 
 <!-- Page Header -->
-<Header 
-  title="AI Budget Coach" 
-  subtitle="Get personalized financial advice powered by AI"
+<Header
+  title="MonKrac AI Coach"
+  subtitle="Your expert financial advisor powered by AI"
 />
 
 <div class="flex flex-col h-[calc(100vh-220px)] lg:h-[calc(100vh-180px)]">
@@ -249,16 +299,31 @@
         </div>
       </div>
     {/if}
+
+    <!-- AI Learning Indicator -->
+    {#if learnedInfo}
+      <div class="px-4 py-2 bg-primary/10 border-t border-border-dark">
+        <p class="text-xs text-primary flex items-center gap-1">
+          <span class="material-symbols-outlined text-sm">psychology</span>
+          {learnedInfo}
+        </p>
+      </div>
+    {/if}
     
     <!-- Suggestions -->
     {#if messages.length <= 1}
       <div class="p-4 border-t border-border-dark">
-        <p class="text-xs text-text-muted mb-2">Try these:</p>
+        <div class="flex items-center gap-2 mb-2">
+          <p class="text-xs text-text-muted">
+            {isLoadingSuggestions ? 'Loading suggestions...' : '🔥 Trending questions:'}
+          </p>
+        </div>
         <div class="flex flex-wrap gap-2">
-          {#each suggestions as suggestion}
+          {#each (isLoadingSuggestions ? defaultSuggestions : suggestions) as suggestion}
             <button
               onclick={() => useSuggestion(suggestion)}
-              class="px-3 py-1.5 text-sm rounded-full bg-bg-dark border border-border-dark text-text-secondary hover:text-white hover:border-primary transition-colors"
+              disabled={isLoadingSuggestions}
+              class="px-3 py-1.5 text-sm rounded-full bg-bg-dark border border-border-dark text-text-secondary hover:text-white hover:border-primary transition-colors disabled:opacity-50"
             >
               {suggestion}
             </button>

@@ -35,6 +35,7 @@
   let currency = $state('MYR');
   let theme = $state('dark');
   let notifications = $state(true);
+  let currencyLoading = $state(false); // Track currency conversion loading
   let githubLinking = $state(false);
   // GitHub status - fetched directly from API, not from SvelteKit data
   let githubLinked = $state(false);
@@ -81,12 +82,26 @@
   // Save preferences to API
   async function savePreferences() {
     try {
-      await fetch('/api/preferences', {
+      // Show loading if currency changed
+      const oldCurrency = linkSuccess.includes('converting') ? currency : null;
+
+      const response = await fetch('/api/preferences', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ currency, theme, notifications })
       });
+
+      const result = await response.json();
+
+      if (result.success) {
+        // If currency was changed, show success message
+        if (result.preferences.currency !== currency) {
+          linkSuccess = `Currency converted from ${result.preferences.currency} to ${currency}`;
+          setTimeout(() => linkSuccess = '', 3000);
+        }
+      }
+
       console.log('[Settings] Preferences saved');
     } catch (err) {
       console.error('[Settings] Failed to save preferences:', err);
@@ -553,8 +568,8 @@
 
 <div class="min-h-screen bg-bg-dark p-4 md:p-6 lg:p-8">
   <Header title="Settings" subtitle="Manage your account and preferences" />
-  
-  <div class="max-w-4xl mx-auto space-y-6 mt-6">
+
+  <div class="space-y-6 mt-6">
     <!-- Profile Section -->
     <Card padding="lg">
       <h3 class="text-lg font-bold text-white mb-6">Profile</h3>
