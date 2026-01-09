@@ -214,14 +214,16 @@
               onclick={() => selectedColor = color}
               class="h-8 w-8 rounded-full border-2 transition-transform hover:scale-110 {selectedColor === color ? 'border-white ring-2 ring-white/30' : 'border-transparent'}"
               style="background-color: {color}"
+              aria-label="Select color {color}"
             ></button>
           {/each}
         </div>
         
         <!-- Custom Color Input -->
         <div class="flex items-center gap-2">
-          <label class="text-sm text-text-muted">Custom:</label>
+          <label for="custom-color-picker" class="text-sm text-text-muted">Custom:</label>
           <input
+            id="custom-color-picker"
             type="color"
             bind:value={selectedColor}
             class="h-8 w-12 rounded cursor-pointer bg-transparent border-0"

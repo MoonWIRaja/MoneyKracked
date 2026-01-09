@@ -16,6 +16,8 @@
 		"@sveltejs/kit": "^2.49.1",
 		"@sveltejs/vite-plugin-svelte": "^6.2.1",
 		"@tailwindcss/vite": "^4.1.18",
+		"@types/qrcode": "^1.5.6",
+		"drizzle-kit": "^0.31.8",
 		"svelte": "^5.45.6",
 		"svelte-check": "^4.3.4",
 		"tailwindcss": "^4.1.18",
@@ -24,9 +26,13 @@
 	},
 	"dependencies": {
 		"@google/generative-ai": "^0.24.1",
+		"@types/nodemailer": "^7.0.4",
 		"better-auth": "^1.4.10",
 		"drizzle-orm": "^0.45.1",
+		"nodemailer": "^7.0.12",
+		"otpauth": "^9.4.1",
 		"postgres": "^3.4.8",
+		"qrcode": "^1.5.4",
 		"uuid": "^13.0.0"
 	}
 }
