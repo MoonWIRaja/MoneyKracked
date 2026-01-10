@@ -14,27 +14,19 @@ export default defineConfig(({ mode }) => {
 	// Parse port from environment
 	const port = parseInt(env.PORT || '5173', 10);
 
-	// Determine if we're behind a proxy
-	const isBehindProxy = env.VERCEL || env.RENDER || env.CF_PAGES || env.AWS_LAMBDA;
-
 	const serverConfig: any = {
 		port,
 		host: true,
+		strictPort: true,
 		allowedHosts: allowedHosts.length > 0 ? allowedHosts : undefined,
 		headers: {
 			'Cache-Control': 'no-store, no-cache, must-revalidate'
+		},
+		// Fix WebSocket issues on Windows
+		watch: {
+			usePolling: true
 		}
 	};
-
-	// Only configure HMR for local development
-	if (!isBehindProxy && mode === 'development') {
-		serverConfig.hmr = {
-			protocol: 'ws',
-			host: 'localhost',
-			port,
-			clientPort: port
-		};
-	}
 
 	return {
 		plugins: [tailwindcss(), sveltekit()],

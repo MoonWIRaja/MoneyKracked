@@ -42,11 +42,8 @@
 </script>
 
 <Card
-  class="group {clickable ? 'cursor-pointer hover:border-primary/50 transition-colors' : ''}"
+  class="group {clickable ? 'hover:border-primary/50' : ''}"
   onclick={clickable ? onclick : undefined}
-  role={clickable ? 'button' : undefined}
-  tabindex={clickable ? 0 : undefined}
-  onkeydown={clickable ? (e: KeyboardEvent) => e.key === 'Enter' && onclick?.() : undefined}
 >
   <div class="flex items-start justify-between">
     <div>

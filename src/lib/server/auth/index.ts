@@ -31,11 +31,30 @@ export const auth = betterAuth({
     minPasswordLength: 8,
     requireEmailVerification: emailVerificationEnabled, // Control via env var
     sendVerificationEmail: async ({ user, url }: { user: { email: string; name: string }; url: string }) => {
+      console.log('[Auth] sendVerificationEmail called for:', user.email, 'enabled:', emailVerificationEnabled);
       // Only send email if verification is enabled
       if (emailVerificationEnabled) {
-        await sendVerificationEmail(user.email, user.name, url);
+        console.log('[Auth] Sending verification email to:', user.email, 'URL:', url);
+        const sent = await sendVerificationEmail(user.email, user.name, url);
+        if (!sent) {
+          console.error('[Auth] Failed to send verification email to:', user.email);
+        }
       } else {
         console.log('[Auth] Email verification disabled, skipping verification email for:', user.email);
+      }
+    }
+  },
+
+  // Add emailVerification callback as well
+  emailVerification: {
+    sendVerificationEmail: async ({ user, url }: { user: { email: string; name: string }; url: string }) => {
+      console.log('[Auth] emailVerification.sendVerificationEmail called for:', user.email);
+      if (emailVerificationEnabled) {
+        console.log('[Auth] Sending verification email to:', user.email, 'URL:', url);
+        const sent = await sendVerificationEmail(user.email, user.name, url);
+        if (!sent) {
+          console.error('[Auth] Failed to send verification email to:', user.email);
+        }
       }
     }
   },

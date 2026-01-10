@@ -1,6 +1,5 @@
 <script lang="ts">
   import { Button, Input, Card } from '$lib/components/ui';
-  import { signUp } from '$lib/auth-client';
   import { goto } from '$app/navigation';
 
   let name = $state('');
@@ -12,6 +11,62 @@
   let loading = $state(false);
   let showSuccess = $state(false);
   let successMessage = $state('');
+
+  // Resend email states
+  let resendCountdown = $state(0);
+  let resendLoading = $state(false);
+  let registeredEmail = $state('');
+  let registeredName = $state('');
+  let countdownInterval: ReturnType<typeof setInterval> | null = null;
+
+  // Start countdown timer
+  function startCountdown() {
+    resendCountdown = 60;
+    if (countdownInterval) clearInterval(countdownInterval);
+
+    countdownInterval = setInterval(() => {
+      resendCountdown--;
+      if (resendCountdown <= 0) {
+        if (countdownInterval) clearInterval(countdownInterval);
+      }
+    }, 1000);
+  }
+
+  // Resend verification email
+  async function handleResendEmail() {
+    if (resendCountdown > 0 || resendLoading || !registeredEmail) return;
+
+    resendLoading = true;
+
+    try {
+      const response = await fetch('/api/resend-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: registeredEmail })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        startCountdown();
+      } else {
+        error = result.error || 'Failed to resend email';
+        setTimeout(() => error = '', 3000);
+      }
+    } catch (err: any) {
+      error = 'Network error. Please try again.';
+      setTimeout(() => error = '', 3000);
+    } finally {
+      resendLoading = false;
+    }
+  }
+
+  // Cleanup interval on unmount
+  $effect(() => {
+    return () => {
+      if (countdownInterval) clearInterval(countdownInterval);
+    };
+  });
 
   async function handleRegister(e: Event) {
     e.preventDefault();
@@ -40,27 +95,24 @@
     loading = true;
 
     try {
-      const result = await signUp.email({
-        email,
-        password,
-        name,
-        username
-      } as any);
+      const response = await fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, name, username })
+      });
 
-      if (result.error) {
-        error = result.error.message || 'Registration failed';
+      const result = await response.json();
+
+      if (result.success) {
+        registeredEmail = email;
+        registeredName = name;
+        showSuccess = true;
+        successMessage = result.message || 'Registration successful! Please check your email to verify your account.';
+        startCountdown(); // Start countdown after successful registration
         loading = false;
       } else {
-        // Registration successful, check if email verification is required
-        if (result.data?.user?.emailVerified === false) {
-          // Email verification required
-          showSuccess = true;
-          successMessage = 'Registration successful! Please check your email to verify your account.';
-          loading = false;
-        } else {
-          // No verification required, redirect to dashboard
-          await goto('/dashboard');
-        }
+        error = result.error || 'Registration failed';
+        loading = false;
       }
     } catch (err: any) {
       error = err.message || 'An unexpected error occurred';
@@ -104,7 +156,14 @@
             </ol>
           </div>
           <p class="text-xs text-text-muted mb-4">
-            Didn't receive the email? Check your spam folder or <a href="/register" class="text-primary hover:underline">try again</a>.
+            Didn't receive the email? Check your spam folder or
+            {#if resendCountdown > 0}
+              <span class="text-text-muted">Resend in <span class="font-mono">{resendCountdown}s</span></span>
+            {:else}
+              <button onclick={handleResendEmail} class="text-primary hover:underline {resendLoading ? 'opacity-50' : ''}" {resendLoading}>
+                {resendLoading ? 'Sending...' : 'click to resend'}
+              </button>
+            {/if}
           </p>
           <Button variant="secondary" class="w-full" onclick={() => window.location.href = '/login'}>
             Go to Login

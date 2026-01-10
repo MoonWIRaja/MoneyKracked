@@ -24,7 +24,8 @@
       "Bash(npm run build:*)",
       "Bash(wc:*)",
       "Bash(find:*)",
-      "Bash(npx drizzle-kit generate:*)"
+      "Bash(npx drizzle-kit generate:*)",
+      "Bash(Remove-Item:*)"
     ]
   }
 }

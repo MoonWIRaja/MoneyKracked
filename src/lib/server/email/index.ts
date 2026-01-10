@@ -94,7 +94,7 @@ export const verificationEmailTemplate = (name: string, verificationUrl: string)
 `;
 
 // Send verification email
-export async function sendVerificationEmail(email: string, name: string, token: string) {
+export async function sendVerificationEmail(email: string, name: string, tokenOrUrl: string) {
 	const transporter = await createTransporter();
 
 	if (!transporter) {
@@ -102,7 +102,10 @@ export async function sendVerificationEmail(email: string, name: string, token: 
 		return false;
 	}
 
-	const verificationUrl = `https://test2.owlscottage.com/verify-email?token=${token}`;
+	// Check if it's a full URL or just a token
+	const verificationUrl = tokenOrUrl.startsWith('http')
+		? tokenOrUrl
+		: `https://test2.owlscottage.com/verify-email?token=${tokenOrUrl}`;
 
 	try {
 		const info = await transporter.sendMail({

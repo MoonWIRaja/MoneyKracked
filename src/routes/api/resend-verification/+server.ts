@@ -1,80 +1,86 @@
-import { json, type RequestHandler } from '@sveltejs/kit';
+import { json, error } from '@sveltejs/kit';
+import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { user, verification } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { sendVerificationEmail } from '$lib/server/email';
+import { randomBytes, randomUUID } from 'crypto';
 
 /**
- * POST /api/resend-verification
- * Resend verification email to user
+ * Resend Verification Email Endpoint
  */
 export const POST: RequestHandler = async ({ request }) => {
   try {
     const body = await request.json();
     const { email } = body;
 
-    if (!email || typeof email !== 'string') {
-      return json({ error: 'Email is required' }, { status: 400 });
+    if (!email) {
+      return json({
+        success: false,
+        error: 'Email is required'
+      }, { status: 400 });
     }
 
-    // Find user by email
+    // Find user
     const existingUser = await db.query.user.findFirst({
       where: eq(user.email, email.toLowerCase())
     });
 
     if (!existingUser) {
-      // Don't reveal whether user exists
       return json({
-        success: true,
-        message: 'If the email exists, a verification link has been sent.'
-      });
+        success: false,
+        error: 'No account found with this email'
+      }, { status: 404 });
     }
 
-    // Check if email is already verified
     if (existingUser.emailVerified) {
       return json({
-        success: true,
-        message: 'Email is already verified. You can now login.'
-      });
+        success: false,
+        error: 'Email is already verified'
+      }, { status: 400 });
     }
 
-    // Generate verification token using crypto
-    const crypto = await import('crypto');
-    const token = crypto.randomBytes(32).toString('hex');
+    // Delete old verification tokens
+    await db.delete(verification)
+      .where(eq(verification.identifier, email.toLowerCase()));
 
-    // Calculate expiration (24 hours from now)
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    // Create new verification token
+    const token = randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
-    // Store verification token in database
     await db.insert(verification).values({
-      id: crypto.randomUUID(),
-      identifier: existingUser.email,
+      id: randomUUID(),
+      identifier: email.toLowerCase(),
       value: token,
-      expiresAt: expiresAt
-    }).onConflictDoNothing();
+      expiresAt
+    });
 
-    // Create verification URL
+    console.log('[Resend] Verification token created for:', email);
+
+    // Send verification email
     const verificationUrl = `https://test2.owlscottage.com/verify-email?token=${token}`;
-
-    // Send verification email directly with our email service
-    const emailSent = await sendVerificationEmail(
-      existingUser.email,
-      existingUser.name || 'User',
-      token
-    );
+    const emailSent = await sendVerificationEmail(email, existingUser.name || 'User', verificationUrl);
 
     if (!emailSent) {
-      return json({ error: 'Failed to send verification email. Please try again later.' }, { status: 500 });
+      console.error('[Resend] Failed to send verification email to:', email);
+      return json({
+        success: false,
+        error: 'Failed to send verification email. Please try again.'
+      }, { status: 500 });
     }
 
-    console.log('[Resend Verification] Verification email sent to:', existingUser.email);
+    console.log('[Resend] Verification email sent successfully to:', email);
 
     return json({
       success: true,
-      message: 'Verification email sent! Please check your inbox.'
+      message: 'Verification email sent successfully!'
     });
-  } catch (error: any) {
-    console.error('[Resend Verification] Error:', error);
-    return json({ error: error.message || 'Failed to resend verification email' }, { status: 500 });
+
+  } catch (err: any) {
+    console.error('[Resend] Error:', err);
+    return json({
+      success: false,
+      error: err.message || 'Failed to resend email'
+    }, { status: 500 });
   }
 };
