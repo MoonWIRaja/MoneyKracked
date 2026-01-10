@@ -23,7 +23,8 @@
       "Bash(npx tsc:*)",
       "Bash(npm run build:*)",
       "Bash(wc:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(npx drizzle-kit generate:*)"
     ]
   }
 }

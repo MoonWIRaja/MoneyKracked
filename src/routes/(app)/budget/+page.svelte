@@ -409,11 +409,13 @@
     if (percentage >= 80) return 'warning';
     return 'safe';
   }
-  
+
+  // Total Budget = budget limits + income (matches Dashboard formula)
   const totalBudget = $derived(budgets.reduce((sum, b) => b.limitAmount > 0 ? sum + b.limitAmount : sum, 0));
-  const totalSpent = $derived(budgets.reduce((sum, b) => b.categoryName === 'Income' ? sum : sum + b.spent, 0));
   const totalIncome = $derived(budgets.find(b => b.categoryName === 'Income')?.spent || 0);
-  const remaining = $derived(totalBudget - totalSpent + totalIncome);
+  const totalBudgetWithIncome = $derived(totalBudget + totalIncome);
+  const totalSpent = $derived(budgets.reduce((sum, b) => b.categoryName === 'Income' ? sum : sum + b.spent, 0));
+  const remaining = $derived(totalBudgetWithIncome - totalSpent);
 
   const selectedMonthYear = $derived(`${months[selectedMonth]} ${selectedYear}`);
 </script>
@@ -486,7 +488,7 @@
   <Card>
     <p class="text-sm font-medium text-text-secondary">Total Budget</p>
     <h3 class="mt-2 text-2xl font-bold text-white">
-      {totalBudget > 0 ? formatAmount(totalBudget) : '-'}
+      {totalBudgetWithIncome > 0 ? formatAmount(totalBudgetWithIncome) : '-'}
     </h3>
     <p class="text-xs text-text-muted mt-1">{selectedMonthYear}</p>
   </Card>
@@ -499,8 +501,8 @@
   <Card>
     <p class="text-sm font-medium text-text-secondary">Remaining</p>
     <h3 class="mt-2 text-2xl font-bold {remaining >= 0 ? 'text-primary' : 'text-danger'}">
-      {totalBudget > 0 ? formatAmount(Math.abs(remaining)) : '-'}
-      {#if remaining < 0 && totalBudget > 0}
+      {totalBudgetWithIncome > 0 ? formatAmount(Math.abs(remaining)) : '-'}
+      {#if remaining < 0 && totalBudgetWithIncome > 0}
         <span class="text-sm font-normal text-danger">(over budget)</span>
       {/if}
     </h3>

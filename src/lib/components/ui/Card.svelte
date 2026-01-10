@@ -6,13 +6,21 @@
     padding?: 'none' | 'sm' | 'md' | 'lg';
     hover?: boolean;
     children?: Snippet;
+    onclick?: () => void;
+    role?: string;
+    tabindex?: number;
+    onkeydown?: (e: KeyboardEvent) => void;
   }
   
   let {
     class: className = '',
     padding = 'md',
     hover = true,
-    children
+    children,
+    onclick,
+    role,
+    tabindex,
+    onkeydown
   }: Props = $props();
   
   const paddings = {
@@ -30,6 +38,10 @@
     {paddings[padding]}
     {className}
   "
+  {onclick}
+  {role}
+  {tabindex}
+  {onkeydown}
 >
   {#if children}
     {@render children()}

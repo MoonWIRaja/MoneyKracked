@@ -31,6 +31,7 @@ export const session = pgTable('session', {
   expiresAt: timestamp('expires_at').notNull(),
   ipAddress: text('ip_address'),
   userAgent: text('user_agent'),
+  deviceId: text('device_id'), // Device fingerprint for binding session to specific device
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull()
 });

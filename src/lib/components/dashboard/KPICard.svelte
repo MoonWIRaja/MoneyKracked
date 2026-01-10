@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Card } from '$lib/components/ui';
-  
+
   interface Props {
     title: string;
     value: string;
@@ -12,24 +12,28 @@
     icon: string;
     iconColor?: 'green' | 'orange' | 'red' | 'blue';
     valueColor?: 'default' | 'primary' | 'danger';
+    clickable?: boolean;
+    onclick?: () => void;
   }
-  
+
   let {
     title,
     value,
     trend,
     icon,
     iconColor = 'green',
-    valueColor = 'default'
+    valueColor = 'default',
+    clickable = false,
+    onclick
   }: Props = $props();
-  
+
   const iconColors = {
     green: 'bg-primary/20 text-primary',
     orange: 'bg-warning/20 text-warning',
     red: 'bg-danger/20 text-danger',
     blue: 'bg-info/20 text-info'
   };
-  
+
   const valueColors = {
     default: 'text-white',
     primary: 'text-primary',
@@ -37,7 +41,13 @@
   };
 </script>
 
-<Card class="group">
+<Card
+  class="group {clickable ? 'cursor-pointer hover:border-primary/50 transition-colors' : ''}"
+  onclick={clickable ? onclick : undefined}
+  role={clickable ? 'button' : undefined}
+  tabindex={clickable ? 0 : undefined}
+  onkeydown={clickable ? (e: KeyboardEvent) => e.key === 'Enter' && onclick?.() : undefined}
+>
   <div class="flex items-start justify-between">
     <div>
       <p class="text-sm font-medium text-text-secondary">{title}</p>
@@ -47,7 +57,7 @@
       <span class="material-symbols-outlined">{icon}</span>
     </div>
   </div>
-  
+
   {#if trend}
     <div class="mt-4 flex items-center gap-2 text-xs">
       <span class="flex items-center font-medium {trend.direction === 'up' ? 'text-danger' : 'text-success'}">
