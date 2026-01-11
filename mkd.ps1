@@ -129,7 +129,7 @@ while (`$restartCount -lt `$maxRestarts) {
         }
 
         Set-Location (Split-Path -Parent `$PSScriptRoot)
-        `$process = Start-Process -FilePath "npm" -ArgumentList "run", "dev" -PassThru -WindowStyle Hidden
+        `$process = Start-Process -FilePath "npm" -ArgumentList "run", "start" -PassThru -WindowStyle Hidden
         `$process.Id | Out-File -FilePath `$pidFile -Force
 
         "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Server started with PID: `$(`$process.Id)" | Out-File -FilePath `$logFile -Append
@@ -198,30 +198,31 @@ while (`$restartCount -lt `$maxRestarts) {
 function Stop-Server {
     Print-Info "Stopping MoneyKracked Development Server..."
 
-    if (-not (Test-Path $PidFile)) {
-        Print-Warn "Server is not running (no PID file found)"
-        exit 0
-    }
-
-    $pid = Get-Content $PidFile
-
-    if (-not (Get-Process -Id $pid -ErrorAction SilentlyContinue)) {
-        Print-Warn "Server process not found (stale PID file)"
-        Remove-Item $PidFile -ErrorAction SilentlyContinue
-        exit 0
-    }
-
-    # Kill the process tree
-    Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
-
-    # Also kill any npm/node processes related to dev server
-    Get-Process node -ErrorAction SilentlyContinue | Where-Object {
-        $_.CommandLine -like "*vite*dev*" -or $_.CommandLine -like "*npm*run*dev*"
-    } | Stop-Process -Force -ErrorAction SilentlyContinue
-
-    # Clean up
-    Start-Sleep -Seconds 1
+    # Remove PID file FIRST to stop auto-restart loop
     Remove-Item $PidFile -ErrorAction SilentlyContinue
+
+    # Kill only npm processes running "npm run start"
+    Get-Process npm -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            $cmd = (Get-WmiObject Win32_Process -Filter "ProcessId = $($_.Id)").CommandLine
+            if ($cmd -like "*npm run start*") {
+                Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+            }
+        } catch {}
+    }
+
+    # Kill process listening on our port (5173)
+    $port = 5173
+    $netstatResult = netstat -ano | Select-String ":$port.*LISTENING"
+    if ($netstatResult) {
+        foreach ($line in $netstatResult) {
+            $parts = $line -split '\s+'
+            $pidOnPort = $parts[-1]
+            if ($pidOnPort -match '^\d+$') {
+                Stop-Process -Id $pidOnPort -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 
     # Clean up temp wrapper scripts
     Get-ChildItem (Join-Path $LogDir "wrapper_*.ps1") -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue

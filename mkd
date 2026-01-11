@@ -199,19 +199,41 @@ start_server() {
 stop_server() {
     print_info "Stopping MoneyKracked Development Server..."
 
-    # Remove PID file first to stop auto-restart loop
+    # Remove PID file FIRST to stop auto-restart loop
     rm -f "$PID_FILE"
 
-    # Kill ALL node and npm processes (comprehensive cleanup)
-    pkill -9 node 2>/dev/null
-    pkill -9 npm 2>/dev/null
+    # Kill only the specific npm run start process (targeted)
+    # Use pgrep to find "npm run start" or "node.*start" processes
+    local pids=$(pgrep -f "npm run start" 2>/dev/null)
 
-    # Wait a moment
+    if [ -n "$pids" ]; then
+        for pid in $pids; do
+            kill "$pid" 2>/dev/null
+        done
+    fi
+
+    # Also kill any node process that's running our server (listening on configured port)
+    local port=$(get_server_port)
+    local port_pid=$(lsof -ti:$port 2>/dev/null)
+    if [ -n "$port_pid" ]; then
+        kill "$port_pid" 2>/dev/null
+    fi
+
+    # Wait a moment for graceful shutdown
     sleep 1
 
-    # Double-check - kill any remaining node/npm
-    pkill -9 node 2>/dev/null
-    pkill -9 npm 2>/dev/null
+    # Force kill if still running (only our specific processes)
+    pids=$(pgrep -f "npm run start" 2>/dev/null)
+    if [ -n "$pids" ]; then
+        for pid in $pids; do
+            kill -9 "$pid" 2>/dev/null
+        done
+    fi
+
+    port_pid=$(lsof -ti:$port 2>/dev/null)
+    if [ -n "$port_pid" ]; then
+        kill -9 "$port_pid" 2>/dev/null
+    fi
 
     print_ok "Server stopped successfully"
     echo ""

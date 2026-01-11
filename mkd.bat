@@ -97,17 +97,21 @@ goto :eof
 echo.
 echo [*] Stopping Server...
 
-if not exist "%PID_FILE%" (
-    echo [!] Not running
-    goto :eof
+REM Remove PID file FIRST to stop auto-restart loop
+del "%PID_FILE%" 2>NUL
+
+REM Kill only npm processes running "npm run start"
+for /f "tokens=2" %%a in ('tasklist ^| findstr /i "npm.exe"') do (
+    for /f "tokens=2" %%b in ('wmic process where "ProcessId=%%a" get CommandLine 2^>NUL ^| findstr /i "npm run start"') do (
+        taskkill /F /PID %%a >NUL 2>&1
+    )
 )
 
-set /p SERVER_PID=<"%PID_FILE%"
-taskkill /F /PID %SERVER_PID% >NUL 2>&1
-taskkill /F /IM node.exe >NUL 2>&1
-taskkill /F /IM npm.exe >NUL 2>&1
+REM Kill process listening on our port (5173 or custom from .env)
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5173.*LISTENING"') do (
+    taskkill /F /PID %%a >NUL 2>&1
+)
 
-del "%PID_FILE%" 2>NUL
 echo [OK] Stopped
 echo.
 goto :eof
