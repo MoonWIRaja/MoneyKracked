@@ -589,6 +589,8 @@
   
   <!-- Mobile History Backdrop -->
   {#if showMobileHistory}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div 
       class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden" 
       onclick={() => showMobileHistory = false}
