@@ -103,8 +103,7 @@ export const auth = betterAuth({
   },
 
   trustedOrigins: [
-    'https://test2.owlscottage.com',
-    'http://test2.owlscottage.com',
+    BETTER_AUTH_URL || 'http://localhost:5173',
     'http://localhost:5173',
     'http://localhost:5174'
   ],

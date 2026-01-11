@@ -102,12 +102,10 @@ export const POST: RequestHandler = async ({ request }) => {
 
     console.log('[Register] Verification token created for:', email);
 
-    // Send verification email
-    const verificationUrl = `https://test2.owlscottage.com/verify-email?token=${token}`;
+    // Send verification email (pass token only, URL will be constructed using BETTER_AUTH_URL)
     console.log('[Register] Sending verification email to:', email);
-    console.log('[Register] Verification URL:', verificationUrl);
 
-    const emailSent = await sendVerificationEmail(email, name, verificationUrl);
+    const emailSent = await sendVerificationEmail(email, name, token);
 
     if (!emailSent) {
       console.error('[Register] Failed to send verification email to:', email);
