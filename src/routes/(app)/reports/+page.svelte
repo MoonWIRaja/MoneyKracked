@@ -847,7 +847,7 @@
               <span class="material-symbols-outlined">menu</span>
             </button>
         <div class="flex flex-col flex-1 min-w-0">
-          <h2 class="text-base md:text-xl font-display text-[var(--color-primary)] truncate">FINANCIAL <span class="text-[var(--color-text)]">REPORTS</span></h2>
+          <h2 class="text-base md:text-xl font-display text-[var(--color-primary)] truncate"><span class="hidden sm:inline">FINANCIAL </span>REPORTS</h2>
           <p class="text-[9px] md:text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
             <span class="flex h-2 w-2 rounded-full bg-[var(--color-primary)] animate-pulse"></span>
             {selectedMonthYear}
