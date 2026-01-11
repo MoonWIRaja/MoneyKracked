@@ -5,7 +5,8 @@ import {
 	SMTP_USER,
 	SMTP_PASS,
 	SMTP_FROM,
-	SMTP_FROM_NAME
+	SMTP_FROM_NAME,
+	BETTER_AUTH_URL
 } from '$env/static/private';
 
 // Dynamic import for nodemailer (server-only)
@@ -103,9 +104,10 @@ export async function sendVerificationEmail(email: string, name: string, tokenOr
 	}
 
 	// Check if it's a full URL or just a token
+	const baseUrl = BETTER_AUTH_URL || 'http://localhost:5173';
 	const verificationUrl = tokenOrUrl.startsWith('http')
 		? tokenOrUrl
-		: `https://test2.owlscottage.com/verify-email?token=${tokenOrUrl}`;
+		: `${baseUrl}/verify-email?token=${tokenOrUrl}`;
 
 	try {
 		const info = await transporter.sendMail({
@@ -178,7 +180,8 @@ export async function sendPasswordResetEmail(email: string, name: string, token:
 		return false;
 	}
 
-	const resetUrl = `https://test2.owlscottage.com/reset-password?token=${token}`;
+	const baseUrl = BETTER_AUTH_URL || 'http://localhost:5173';
+	const resetUrl = `${baseUrl}/reset-password?token=${token}`;
 
 	try {
 		const info = await transporter.sendMail({
