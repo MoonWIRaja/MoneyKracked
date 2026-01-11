@@ -287,7 +287,7 @@
     processDashboardData();
 
     // Subscribe to currency changes using lazy subscription (no immediate callback)
-    const unsubscribe = subscribeToCurrencyLazy((currency, rates) => {
+    const unsubscribe = subscribeToCurrencyLazy((currency: Currency, rates: Record<string, Record<string, number>>) => {
       selectedCurrency = currency;
       exchangeRates = rates;
       // Manually trigger data processing

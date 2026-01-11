@@ -173,7 +173,7 @@
 
     await fetchData();
 
-    unsubscribeCurrency = subscribeToCurrency((currency, rates) => {
+    unsubscribeCurrency = subscribeToCurrency((currency: Currency, rates: Record<string, Record<string, number>>) => {
       selectedCurrency = currency;
       exchangeRates = rates;
       currencyUpdateCounter++;  // Trigger template re-render
