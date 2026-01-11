@@ -1,7 +1,5 @@
 <script lang="ts">
   import { page } from '$app/stores';
-  import { signOut } from '$lib/auth-client';
-  import { goto } from '$app/navigation';
 
   interface Props {
     user: {
@@ -9,12 +7,14 @@
       email: string;
       image?: string | null;
     } | null;
+    mobileOpen?: boolean;
+    onClose?: () => void;
   }
 
-  let { user }: Props = $props();
+  let { user, mobileOpen = false, onClose }: Props = $props();
   let showProfileDrawer = $state(false);
-  
-  // Navigation items - removed Settings (moved to profile drawer)
+
+  // Navigation items
   const navItems = [
     { href: '/dashboard', icon: 'dashboard', label: 'Dashboard' },
     { href: '/transactions', icon: 'receipt_long', label: 'Transactions' },
@@ -22,19 +22,12 @@
     { href: '/reports', icon: 'pie_chart', label: 'Reports' },
     { href: '/coach', icon: 'smart_toy', label: 'AI Coach' }
   ];
-  
+
   function isActive(href: string): boolean {
     return $page.url.pathname === href || $page.url.pathname.startsWith(href + '/');
   }
-  
-  async function handleLogout() {
-    try {
-      await signOut();
-    } catch (err) {
-      console.error('Better Auth signOut failed:', err);
-    }
-    // Also clear custom session cookie by making API call
-    // Then do full page redirect to ensure all state is cleared
+
+  function handleLogout() {
     window.location.href = '/api/logout';
   }
   
@@ -47,123 +40,111 @@
   }
 </script>
 
-<aside class="hidden lg:flex w-64 flex-col border-r border-border-dark bg-surface-dark">
+<aside
+  class="fixed inset-y-0 left-0 z-50 w-64 flex flex-col border-r-4 border-[var(--color-border)] bg-[var(--color-surface)] transition-transform duration-300 lg:static lg:flex lg:translate-x-0
+  {mobileOpen ? 'translate-x-0' : '-translate-x-full'}"
+>
   <div class="flex flex-col h-full justify-between p-4">
     <!-- Top Section -->
-    <div class="flex flex-col gap-6">
+    <div class="flex flex-col gap-8">
       <!-- Brand -->
-      <div class="flex items-center gap-3 px-2">
-        <div class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/20 text-primary">
-          <span class="material-symbols-outlined">account_balance_wallet</span>
-        </div>
-        <div class="flex flex-col">
-          <h1 class="text-base font-bold leading-tight text-white">MoneyKracked</h1>
-          <p class="text-xs text-text-muted">Manage wisely</p>
-        </div>
-      </div>
+        <a href="/dashboard" class="flex items-center gap-3 px-2 group">
+          <div class="flex h-12 w-12 items-center justify-center border-2 border-[var(--color-border)] bg-[var(--color-primary)] text-black shadow-[4px_4px_0px_0px_var(--color-shadow)] group-hover:scale-105 transition-transform">
+            <span class="material-symbols-outlined">account_balance_wallet</span>
+          </div>
+          <div class="flex flex-col">
+            <h1 class="text-xs font-bold leading-tight text-[var(--color-primary)] font-display tracking-tight uppercase group-hover:text-[var(--color-text)] transition-colors">Money<br>Kracked</h1>
+          </div>
+        </a>
       
       <!-- Navigation -->
-      <nav class="flex flex-col gap-1">
+      <nav class="flex flex-col gap-3">
         {#each navItems as item}
+          {@const active = isActive(item.href)}
           <a
             href={item.href}
-            class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200
-              {isActive(item.href) 
-                ? 'bg-primary text-white shadow-lg shadow-primary/20' 
-                : 'text-text-secondary hover:text-white hover:bg-border-dark'}"
+            onclick={onClose}
+            class="flex items-center gap-3 px-3 py-3 text-sm font-medium transition-all duration-100 border-2 select-none
+              {active 
+                ? 'bg-[var(--color-primary)] text-black border-[var(--color-border)] shadow-[4px_4px_0px_0px_var(--color-shadow)] -translate-y-1' 
+                : 'text-[var(--color-text-muted)] border-transparent hover:border-[var(--color-border)] hover:bg-[var(--color-surface-raised)] hover:text-[var(--color-text)]'}"
           >
             <span 
               class="material-symbols-outlined text-xl"
-              style={isActive(item.href) ? "font-variation-settings: 'FILL' 1;" : ''}
+              style={active ? "font-variation-settings: 'FILL' 1;" : ''}
             >{item.icon}</span>
-            <span>{item.label}</span>
+            <span class="font-mono text-sm tracking-widest uppercase">{item.label}</span>
           </a>
         {/each}
       </nav>
     </div>
     
-    <!-- Bottom Section: User Profile Button -->
-    <div class="relative border-t border-border-dark pt-4">
-      {#if user}
-        <button
-          onclick={toggleProfileDrawer}
-          class="w-full flex items-center gap-3 rounded-lg p-2 hover:bg-border-dark transition-colors text-left"
-        >
-          {#if user.image}
-            <img src={user.image} alt={user.name} class="h-10 w-10 rounded-full object-cover" />
-          {:else}
-            <div class="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold">
-              {user.name?.charAt(0).toUpperCase() || 'U'}
+      <!-- User Profile Button -->
+      <div class="relative border-t-2 border-dashed border-[var(--color-border)] pt-4">
+        {#if user}
+          <button
+            onclick={toggleProfileDrawer}
+            class="w-full flex items-center gap-3 p-2 hover:bg-[var(--color-surface-raised)] border-2 border-transparent hover:border-[var(--color-border)] transition-all text-left group"
+          >
+            {#if user.image}
+              <img src={user.image} alt={user.name} class="h-10 w-10 border-2 border-[var(--color-border)] object-cover" />
+            {:else}
+              <div class="h-10 w-10 border-2 border-[var(--color-border)] bg-[var(--color-secondary)] flex items-center justify-center text-white font-bold">
+                {user.name?.charAt(0).toUpperCase() || 'U'}
+              </div>
+            {/if}
+            <div class="flex-1 overflow-hidden group-hover:translate-x-1 transition-transform">
+              <p class="truncate text-sm font-bold text-[var(--color-text)] font-display">{user.name}</p>
+              <p class="truncate text-xs text-[var(--color-text-muted)] font-mono">{user.email}</p>
             </div>
-          {/if}
-          <div class="flex-1 overflow-hidden">
-            <p class="truncate text-sm font-medium text-white">{user.name}</p>
-            <p class="truncate text-xs text-text-muted">{user.email}</p>
-          </div>
-          <span class="material-symbols-outlined text-text-muted text-lg">
-            {showProfileDrawer ? 'expand_less' : 'expand_more'}
-          </span>
-        </button>
-        
-        <!-- Profile Drawer -->
-        {#if showProfileDrawer}
-          <div class="absolute bottom-full left-0 right-0 mb-2 rounded-2xl bg-surface-dark border border-border-dark shadow-2xl overflow-hidden">
-            <!-- User Info Header -->
-            <div class="p-4 border-b border-border-dark bg-gradient-to-r from-primary/10 to-primary/5">
-              <div class="flex items-center gap-3">
-                {#if user.image}
-                  <img src={user.image} alt={user.name} class="h-14 w-14 rounded-full object-cover ring-2 ring-primary/30 flex-shrink-0" />
-                {:else}
-                  <div class="h-14 w-14 rounded-full bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center text-white text-xl font-bold shadow-lg flex-shrink-0">
-                    {user.name?.charAt(0).toUpperCase() || 'U'}
-                  </div>
-                {/if}
-                <div class="min-w-0 flex-1">
-                  <p class="text-sm font-bold text-white truncate">{user.name}</p>
-                  <p class="text-xs text-text-muted truncate">{user.email}</p>
-                </div>
+            <span class="material-symbols-outlined text-[var(--color-text-muted)]">
+              {showProfileDrawer ? 'expand_less' : 'expand_more'}
+            </span>
+          </button>
+          
+          <!-- Profile Drawer -->
+          {#if showProfileDrawer}
+             <!-- svelte-ignore a11y_click_events_have_key_events -->
+             <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="absolute bottom-full left-0 right-0 mb-4 bg-[var(--color-surface)] border-2 border-[var(--color-border)] shadow-[8px_8px_0px_0px_var(--color-shadow)] z-50 rounded-tr-lg rounded-tl-lg">
+              <!-- Menu Options -->
+              <div class="p-2 flex flex-col gap-2">
+                <a
+                  href="/settings"
+                  onclick={() => { closeDrawer(); onClose?.(); }}
+                  class="flex items-center gap-3 px-3 py-2 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-primary)] hover:text-black border-2 border-transparent hover:border-[var(--color-border)] transition-colors"
+                >
+                  <span class="material-symbols-outlined text-xl">settings</span>
+                  <span class="font-display text-xs">Settings</span>
+                </a>
+
+                <button
+                  onclick={handleLogout}
+                  class="w-full flex items-center gap-3 px-3 py-2 text-sm font-medium text-[var(--color-danger)] hover:bg-[var(--color-danger)] hover:text-white border-2 border-transparent hover:border-[var(--color-border)] transition-colors"
+                >
+                  <span class="material-symbols-outlined text-xl">logout</span>
+                  <span class="font-display text-xs">Log Out</span>
+                </button>
               </div>
             </div>
-
-            <!-- Menu Options -->
-            <div class="p-2">
-              <a
-                href="/settings"
-                onclick={closeDrawer}
-                class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-text-secondary hover:text-white hover:bg-border-dark transition-all duration-200"
-              >
-                <span class="material-symbols-outlined text-xl">settings</span>
-                <span>Settings</span>
-              </a>
-
-              <button
-                onclick={handleLogout}
-                class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-text-secondary hover:text-danger hover:bg-danger/10 transition-all duration-200"
-              >
-                <span class="material-symbols-outlined text-xl">logout</span>
-                <span>Log Out</span>
-              </button>
-            </div>
-          </div>
+            
+            <!-- Backdrop (Desktop) -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div 
+              class="fixed inset-0 z-40 bg-black/0 cursor-default" 
+              onclick={closeDrawer}
+            ></div>
+          {/if}
+        {:else}
+          <a
+            href="/login"
+            class="iso-btn w-full justify-center"
+          >
+            <span class="material-symbols-outlined">login</span>
+            <span>Sign In</span>
+          </a>
         {/if}
-      {:else}
-        <a
-          href="/login"
-          class="flex items-center gap-3 rounded-lg px-3 py-2 text-text-secondary hover:text-white hover:bg-border-dark transition-colors"
-        >
-          <span class="material-symbols-outlined">login</span>
-          <span class="text-sm font-medium">Sign In</span>
-        </a>
-      {/if}
+      </div>
     </div>
-  </div>
 </aside>
-
-<!-- Click outside to close drawer -->
-{#if showProfileDrawer}
-  <button
-    class="fixed inset-0 z-40 lg:hidden"
-    onclick={closeDrawer}
-    aria-label="Close profile menu"
-  ></button>
-{/if}

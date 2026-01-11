@@ -4,8 +4,11 @@ import { db } from '$lib/server/db';
 import { user, verification, account } from '$lib/server/db/schema';
 import { eq } from 'drizzle-orm';
 import { sendVerificationEmail } from '$lib/server/email';
-import { auth } from '$lib/server/auth';
 import { randomBytes, randomUUID } from 'crypto';
+
+// Import Better Auth's internal password hashing
+// @ts-ignore - Accessing internal Better Auth API
+import { hashPassword } from 'better-auth/crypto';
 
 /**
  * Custom Register Endpoint
@@ -55,9 +58,7 @@ export const POST: RequestHandler = async ({ request }) => {
     }
 
     // Hash password using Better Auth's hash function
-    // Access the internal password hasher from Better Auth context
-    @ts-ignore - Accessing internal Better Auth API
-    const hashedPassword = await auth.$context.password.hash(password);
+    const hashedPassword = await hashPassword(password);
 
     const userId = randomUUID();
 

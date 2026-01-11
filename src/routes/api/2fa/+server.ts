@@ -12,15 +12,24 @@ async function getUserId(request: Request, cookies: any): Promise<string | null>
   const session = await auth.api.getSession({ headers: request.headers });
   if (session?.user?.id) return session.user.id;
 
-  const customToken = cookies.get('better-auth.session_token');
+  // Check mk_session cookie first (our custom session)
+  let customToken = cookies.get('mk_session');
+  if (!customToken) {
+    customToken = cookies.get('better-auth.session_token');
+  }
   if (customToken) {
-    const dbSession = await db.query.session.findFirst({
-      where: and(
-        eq(sessionTable.token, customToken),
-        gt(sessionTable.expiresAt, new Date())
-      )
-    });
-    if (dbSession) return dbSession.userId;
+    // Extract session token (before the dot if signed)
+    const sessionToken = customToken.includes('.') ? customToken.split('.')[0] : customToken;
+
+    // Use raw SQL to avoid Drizzle relations issue
+    const { queryClient } = await import('$lib/server/db');
+    const result = await queryClient.unsafe(
+      'SELECT s.user_id FROM session s WHERE s.token = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW()) LIMIT 1',
+      [sessionToken]
+    );
+    if (result && result.length > 0) {
+      return (result[0] as any).user_id;
+    }
   }
   return null;
 }

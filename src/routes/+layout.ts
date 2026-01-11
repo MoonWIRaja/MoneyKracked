@@ -1,3 +1,3 @@
-// Disable SSR - fix HMR issues and prevent hydration errors
-// Performance optimized through: server preload, caching, inline CSS
-export const ssr = false;
+// Enable SSR for authentication to work properly
+// The session cookie needs to be read server-side during initial load
+export const ssr = true;

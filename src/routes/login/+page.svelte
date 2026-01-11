@@ -1,29 +1,27 @@
 <script lang="ts">
-  import { Button, Input, Card } from '$lib/components/ui';
+  import { PixelButton, Input, IsometricCard, FloatingDecoration } from '$lib/components/ui';
   import { authClient } from '$lib/auth-client';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
 
-  let identifier = $state(''); // Email or username
+  let identifier = $state('');
   let password = $state('');
   let error = $state('');
   let loading = $state(false);
 
-  // 2FA states
   let showTwoFactor = $state(false);
   let twoFactorCode = $state('');
   let pendingUserId = $state('');
   let useBackupCode = $state(false);
 
-  // Check for OAuth error from URL params (returned after GitHub OAuth fails)
   $effect(() => {
     const urlError = $page.url.searchParams.get('error');
     if (urlError === 'oauth_failed') {
-      error = 'GitHub login failed. Please try again or use email/password.';
+      error = 'GitHub login failed. Use email/password.';
     } else if (urlError === 'state_mismatch') {
-      error = 'Authentication session expired. Please try again.';
-    } else if (urlError === 'not_linked') {
-      error = 'This GitHub account is not linked to any account. Please register first, then link GitHub in Settings.';
+      error = 'Session expired. Try again.';
+    } else if (urlError === 'not_linked' || urlError === 'github_not_linked') {
+      error = 'Link GitHub in Settings first.';
     }
   });
 
@@ -31,69 +29,35 @@
     e.preventDefault();
     error = '';
     loading = true;
-
     try {
       const isEmail = identifier.includes('@');
       let result;
-
       if (isEmail) {
-        // Login with email
-        result = await authClient.signIn.email({
-          email: identifier,
-          password
-        });
+        result = await authClient.signIn.email({ email: identifier, password });
       } else {
-        // Login with username
-        result = await authClient.signIn.username({
-          username: identifier,
-          password
-        });
+        result = await authClient.signIn.username({ username: identifier, password });
       }
 
-      console.log('Login result:', result);
-
       if (result?.error) {
-        // Check if error is about email verification
-        if (result.error.message?.includes('verify') || result.error.status === 403) {
-          error = 'Please verify your email address before logging in. Check your inbox for the verification link.';
-        } else {
-          error = result.error.message || 'Login failed. Please check your credentials.';
-        }
+        error = result.error.message || 'Login failed.';
         loading = false;
       } else if (result?.data) {
         const user = result.data.user;
-
-        // Check if user's email is verified (if verification is enabled)
         if (user.emailVerified === false) {
-          error = 'Please verify your email address before logging in. Check your inbox for the verification link.';
+          error = 'Verify your email first.';
           loading = false;
           return;
         }
-
-        // Check if user has 2FA enabled by fetching from database
-        // Better Auth doesn't include custom fields in the user object
         const twoFaResponse = await fetch('/api/2fa');
         const twoFaData = await twoFaResponse.json();
-
         if (twoFaData.enabled) {
-          // Show 2FA verification screen
-          pendingUserId = user.id;
-          showTwoFactor = true;
-          loading = false;
+          pendingUserId = user.id; showTwoFactor = true; loading = false;
         } else {
-          // Login successful, force full page redirect
-          console.log('Login successful, redirecting...');
-          setTimeout(() => {
-            window.location.replace('/dashboard');
-          }, 100);
+          setTimeout(() => { window.location.replace('/dashboard'); }, 100);
         }
-      } else {
-        error = 'Login failed. Please try again.';
-        loading = false;
       }
     } catch (err: any) {
-      console.error('Login error:', err);
-      error = err.message || 'An unexpected error occurred';
+      error = 'An error occurred';
       loading = false;
     }
   }
@@ -101,55 +65,27 @@
   async function verifyTwoFactor() {
     error = '';
     loading = true;
-
     try {
       const response = await fetch('/api/2fa/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({
-          userId: pendingUserId,
-          code: twoFactorCode,
-          isBackup: useBackupCode
-        })
+        body: JSON.stringify({ userId: pendingUserId, code: twoFactorCode, isBackup: useBackupCode })
       });
-
       const result = await response.json();
-
       if (result.success) {
-        // 2FA verified, redirect to dashboard
-        console.log('2FA verified, redirecting...');
-        setTimeout(() => {
-          window.location.replace('/dashboard');
-        }, 100);
+        setTimeout(() => { window.location.replace('/dashboard'); }, 100);
       } else {
-        error = result.error || 'Invalid verification code';
+        error = 'Invalid code';
         loading = false;
       }
-    } catch (err: any) {
-      console.error('2FA verification error:', err);
-      error = err.message || 'Verification failed';
+    } catch (err) {
+      error = 'Verification failed';
       loading = false;
     }
   }
 
-  function cancelTwoFactor() {
-    showTwoFactor = false;
-    twoFactorCode = '';
-    pendingUserId = '';
-    useBackupCode = false;
-    error = '';
-  }
-
-  function handleTwoFactorSubmit(e: Event) {
-    e.preventDefault();
-    verifyTwoFactor();
-  }
-
-  async function handleGitHubLogin() {
-    error = '';
-    loading = true;
-    // Redirect to unified GitHub OAuth endpoint in login mode
+  function handleGitHubLogin() {
     window.location.href = '/api/github-oauth?mode=login&callbackURL=/dashboard';
   }
 
@@ -158,40 +94,14 @@
 
   async function resendVerificationEmail() {
     resendLoading = true;
-    resendSuccess = false;
-
     try {
-      const isEmail = identifier.includes('@');
-
-      if (!isEmail) {
-        error = 'Please enter your email address to resend verification email.';
-        resendLoading = false;
-        return;
-      }
-
-      const response = await fetch('/api/resend-verification', {
+      const resp = await fetch('/api/resend-verification', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: identifier })
       });
-
-      const result = await response.json();
-
-      if (response.ok) {
-        resendSuccess = true;
-        error = '';
-        // Clear success message after 5 seconds
-        setTimeout(() => {
-          resendSuccess = false;
-        }, 5000);
-      } else {
-        error = result.error || 'Failed to resend verification email.';
-      }
-    } catch (err: any) {
-      error = err.message || 'Failed to resend verification email.';
-    } finally {
-      resendLoading = false;
-    }
+      if (resp.ok) resendSuccess = true;
+    } finally { resendLoading = false; }
   }
 </script>
 
@@ -199,182 +109,132 @@
   <title>Login - MoneyKracked</title>
 </svelte:head>
 
-<div class="min-h-screen bg-bg-dark flex items-center justify-center p-4">
-  <div class="w-full max-w-md">
-    <!-- Brand Header -->
-    <div class="text-center mb-8">
-      <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/20 text-primary mb-4">
-        <span class="material-symbols-outlined text-3xl">account_balance_wallet</span>
+<div class="min-h-screen bg-[var(--color-bg)] flex flex-col items-center justify-center p-6 relative overflow-hidden">
+  <!-- 3D Decorations in background -->
+  <FloatingDecoration top="10%" left="10%" color="var(--color-primary)" size="30px" delay="0s" rotate="10deg" />
+  <FloatingDecoration top="80%" left="15%" color="var(--color-secondary)" size="25px" delay="2s" rotate="-15deg" />
+  <FloatingDecoration top="20%" left="80%" color="var(--color-success)" size="20px" delay="4s" rotate="30deg" />
+  <FloatingDecoration top="70%" left="85%" color="var(--color-warning)" size="35px" delay="1s" rotate="-20deg" />
+
+  <!-- Decorative Grid Background (Same as layout) -->
+  <div class="absolute inset-0 opacity-10 pointer-events-none" 
+    style="background-image: radial-gradient(var(--color-primary) 1px, transparent 1px); background-size: 24px 24px;">
+  </div>
+
+  <div class="w-full max-w-sm relative z-10">
+    <!-- Brand -->
+    <div class="text-center mb-10">
+      <div class="inline-flex items-center justify-center w-20 h-20 border-4 border-black bg-[var(--color-primary)] shadow-[4px_4px_0px_0px_var(--color-shadow)] mb-4">
+        <span class="material-symbols-outlined text-4xl text-black">account_balance_wallet</span>
       </div>
-      <h1 class="text-2xl font-bold text-white">MoneyKracked</h1>
-      <p class="text-text-secondary mt-1">Smart Finance Dashboard</p>
+      <h1 class="text-2xl font-display text-[var(--color-primary)] tracking-tight uppercase px-2">MoneyKracked</h1>
+      <p class="text-[12px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest mt-1">Secure Access</p>
     </div>
 
-    <!-- Login Card -->
-    <Card>
+    <IsometricCard title={showTwoFactor ? "Security Lock" : "Account Login"}>
       {#if showTwoFactor}
-        <!-- 2FA Verification Screen -->
-        <h2 class="text-xl font-bold text-white mb-2">Two-Factor Authentication</h2>
-        <p class="text-sm text-text-muted mb-6">Enter the verification code from your authenticator app</p>
+        <div class="space-y-6">
+          <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase text-center mt-2">Enter Verification Code</p>
 
-        {#if error}
-          <div class="mb-4 p-3 rounded-lg bg-danger/10 border border-danger/20 text-danger text-sm flex items-start gap-2">
-            <span class="material-symbols-outlined text-lg flex-shrink-0">error</span>
-            <span>{error}</span>
+          {#if error}
+            <div class="p-3 border-4 border-black bg-[var(--color-danger)] text-black text-[10px] font-mono uppercase">
+               ERROR: {error}
+            </div>
+          {/if}
+
+          <!-- Method Switcher -->
+          <div class="flex border-4 border-black p-1 bg-[var(--color-surface-raised)]">
+            <button 
+              class="flex-1 py-2 text-[9px] font-display uppercase {!useBackupCode ? 'bg-black text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]'}"
+              onclick={() => { useBackupCode = false; twoFactorCode = ''; }}
+            >
+              App Code
+            </button>
+            <button 
+              class="flex-1 py-2 text-[9px] font-display uppercase {useBackupCode ? 'bg-black text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]'}"
+              onclick={() => { useBackupCode = true; twoFactorCode = ''; }}
+            >
+              Backup Key
+            </button>
           </div>
-        {/if}
 
-        <!-- Method Toggle -->
-        <div class="flex gap-2 p-1 bg-bg-dark rounded-lg mb-6">
-          <button
-            type="button"
-            class="flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors {!useBackupCode ? 'bg-primary text-white' : 'text-text-muted hover:text-white'}"
-            onclick={() => { useBackupCode = false; twoFactorCode = ''; error = ''; }}
-          >
-            <span class="material-symbols-outlined text-sm align-middle mr-1">phonelink</span>
-            Authenticator
-          </button>
-          <button
-            type="button"
-            class="flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors {useBackupCode ? 'bg-primary text-white' : 'text-text-muted hover:text-white'}"
-            onclick={() => { useBackupCode = true; twoFactorCode = ''; error = ''; }}
-          >
-            <span class="material-symbols-outlined text-sm align-middle mr-1">backup</span>
-            Backup Code
-          </button>
-        </div>
-
-        <form onsubmit={handleTwoFactorSubmit} class="space-y-4">
-          <div>
-            <label for="two-factor-code" class="block text-sm font-medium text-white mb-2">
-              {useBackupCode ? 'Enter backup code' : 'Enter 6-digit code'}
-            </label>
-            <input
-              id="two-factor-code"
-              type="text"
-              inputmode={useBackupCode ? 'text' : 'numeric'}
-              pattern={useBackupCode ? undefined : '[0-9]{6}'}
-              maxlength={useBackupCode ? 8 : 6}
+          <form onsubmit={(e) => { e.preventDefault(); verifyTwoFactor(); }} class="space-y-6">
+            <input 
+              type="text" 
               bind:value={twoFactorCode}
               placeholder={useBackupCode ? 'XXXXXXXX' : '000000'}
-              class="w-full bg-bg-dark border border-border-dark rounded-lg px-4 py-3 text-white text-center text-2xl tracking-widest focus:outline-none focus:ring-2 focus:ring-primary"
+              class="iso-input text-center text-3xl font-mono tracking-widest"
+              maxlength={useBackupCode ? 8 : 6}
               required
-              autocomplete="one-time-code"
             />
-          </div>
 
-          <div class="flex gap-3">
-            <Button type="button" variant="secondary" class="flex-1" onclick={cancelTwoFactor}>
-              Back
-            </Button>
-            <Button type="submit" class="flex-1" {loading}>
-              Verify
-            </Button>
-          </div>
-        </form>
-
-        <p class="mt-4 text-xs text-text-muted text-center">
-          Lost your authenticator and backup codes? Contact support for assistance.
-        </p>
-      {:else}
-        <!-- Normal Login Screen -->
-        <h2 class="text-xl font-bold text-white mb-6">Welcome back</h2>
-
-        {#if error}
-          <div class="mb-4 p-3 rounded-lg bg-danger/10 border border-danger/20 text-danger text-sm">
-            <div class="flex items-start gap-2">
-              <span class="material-symbols-outlined text-lg flex-shrink-0">error</span>
-              <span class="flex-1">{error}</span>
+            <div class="flex gap-3">
+              <PixelButton variant="ghost" class="flex-1 text-xs" onclick={() => showTwoFactor = false}>Back</PixelButton>
+              <PixelButton variant="primary" class="flex-1 text-xs" type="submit" loading={loading}>Verify</PixelButton>
             </div>
-            {#if error.includes('verify your email')}
-              <button
-                type="button"
-                class="mt-2 text-xs font-medium underline hover:no-underline flex items-center gap-1 text-danger"
-                onclick={resendVerificationEmail}
-                disabled={resendLoading}
-              >
-                {#if resendLoading}
-                  <span class="material-symbols-outlined text-sm animate-spin">refresh</span>
-                  Sending...
-                {:else}
-                  <span class="material-symbols-outlined text-sm">send</span>
-                  Resend verification email
-                {/if}
-              </button>
-            {/if}
-          </div>
-        {/if}
-
-        {#if resendSuccess}
-          <div class="mb-4 p-3 rounded-lg bg-success/10 border border-success/20 text-success text-sm flex items-center gap-2">
-            <span class="material-symbols-outlined text-lg">check_circle</span>
-            <span>Verification email sent! Check your inbox.</span>
-          </div>
-        {/if}
-
-        <form onsubmit={handleLogin} class="space-y-4">
-          <Input
-            type="text"
-            name="identifier"
-            label="Email or Username"
-            placeholder="you@example.com or username"
-            bind:value={identifier}
-            required
-          />
-
-          <Input
-            type="password"
-            name="password"
-            label="Password"
-            placeholder="••••••••"
-            bind:value={password}
-            required
-          />
-
-          <div class="flex items-center justify-between text-sm">
-            <label class="flex items-center gap-2 text-text-secondary cursor-pointer">
-              <input type="checkbox" class="rounded border-border-dark bg-bg-dark text-primary focus:ring-primary" />
-              Remember me
-            </label>
-            <a href="/forgot-password" class="text-primary hover:underline">Forgot password?</a>
-          </div>
-
-          <Button type="submit" class="w-full" {loading}>
-            Sign In
-          </Button>
-        </form>
-
-        <!-- Divider -->
-        <div class="relative my-6">
-          <div class="absolute inset-0 flex items-center">
-            <div class="w-full border-t border-border-dark"></div>
-          </div>
-          <div class="relative flex justify-center text-sm">
-            <span class="px-4 bg-surface-dark text-text-muted">Or continue with</span>
-          </div>
+          </form>
         </div>
+      {:else}
+        <div class="space-y-6">
+          {#if error || resendSuccess}
+            <div class="p-3 border-4 border-black font-mono text-[10px] uppercase
+               {error ? 'bg-[var(--color-danger)] text-black' : 'bg-[var(--color-primary)] text-black'}">
+               {error ? `Login Error: ${error}` : 'Verification link sent to your inbox'}
+               
+               {#if error && identifier.includes('@')}
+                 <button 
+                    onclick={resendVerificationEmail} 
+                    class="block mt-2 underline hover:no-underline opacity-70"
+                    disabled={resendLoading}
+                 >
+                    {resendLoading ? 'Resending...' : 'Resend Link'}
+                 </button>
+               {/if}
+            </div>
+          {/if}
 
-        <!-- GitHub Login -->
-        <Button variant="secondary" class="w-full" onclick={handleGitHubLogin}>
-          {#snippet icon()}
-            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-            </svg>
-          {/snippet}
-          Continue with GitHub
-        </Button>
+          <form onsubmit={handleLogin} class="space-y-5">
+            <Input label="Email or Username" bind:value={identifier} placeholder="Enter your email" required />
+            <Input label="Password" type="password" bind:value={password} placeholder="••••••••" required />
+            
+            <div class="flex items-center justify-between">
+              <label class="flex items-center gap-2 cursor-pointer group">
+                <input type="checkbox" class="w-5 h-5 border-4 border-black bg-black checked:bg-[var(--color-primary)] outline-none" />
+                <span class="text-[9px] font-mono text-[var(--color-text-muted)] group-hover:text-[var(--color-text)] transition-colors uppercase">Remember Me</span>
+              </label>
+              <a href="/forgot-password" class="text-[9px] font-mono text-[var(--color-primary)] hover:underline uppercase">Forgot Password?</a>
+            </div>
 
-        <!-- Note about GitHub -->
-        <p class="mt-3 text-xs text-text-muted text-center">
-          GitHub login only works if you've linked your account in Settings
-        </p>
+            <PixelButton type="submit" variant="primary" class="w-full" loading={loading}>
+              Sign In
+            </PixelButton>
+          </form>
 
-        <!-- Register Link -->
-        <p class="mt-6 text-center text-sm text-text-secondary">
-          Don't have an account?
-          <a href="/register" class="text-primary font-medium hover:underline">Sign up</a>
-        </p>
+          <div class="relative py-4">
+            <div class="absolute inset-0 flex items-center"><div class="w-full border-t-2 border-black opacity-20"></div></div>
+            <div class="relative flex justify-center text-[8px] font-display uppercase">
+               <span class="px-2 bg-[var(--color-surface)]">External Login</span>
+            </div>
+          </div>
+
+          <PixelButton variant="ghost" class="w-full text-xs" onclick={handleGitHubLogin}>
+            {#snippet icon()}
+              <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+              </svg>
+            {/snippet}
+            Continue with GitHub
+          </PixelButton>
+
+          <p class="text-center text-[9px] font-mono text-[var(--color-text-muted)] uppercase">
+            New user? <a href="/register" class="text-[var(--color-primary)] font-bold hover:underline">Create Account</a>
+          </p>
+        </div>
       {/if}
-    </Card>
+    </IsometricCard>
+
+    <p class="text-center mt-8 text-[8px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest opacity-50">
+      System Version 4.0.0 Stable
+    </p>
   </div>
 </div>

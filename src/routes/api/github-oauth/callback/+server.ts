@@ -1,17 +1,29 @@
 import { redirect } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { account, user, session } from '$lib/server/db/schema';
+import { account, user, session as sessionTable } from '$lib/server/db/schema';
 import { eq, and } from 'drizzle-orm';
-import { GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, BETTER_AUTH_URL } from '$env/static/private';
+import { GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, BETTER_AUTH_URL, BETTER_AUTH_SECRET } from '$env/static/private';
+import { auth } from '$lib/server/auth';
 
 /**
  * Unified callback for GitHub OAuth.
  * Handles both login and account linking based on stored mode cookie.
  */
-export const GET: RequestHandler = async ({ url, cookies }) => {
+export const GET: RequestHandler = async ({ url, cookies, request }) => {
   const code = url.searchParams.get('code');
   const state = url.searchParams.get('state');
+
+  // DEBUG: Log incoming request details
+  console.log('=== GitHub OAuth Callback DEBUG ===');
+  console.log('url.origin:', url.origin);
+  console.log('url.hostname:', url.hostname);
+  console.log('url.href:', url.href);
+  console.log('Request Host header:', request.headers.get('host'));
+  console.log('Request Origin header:', request.headers.get('origin'));
+  console.log('Request x-forwarded-host:', request.headers.get('x-forwarded-host'));
+  console.log('Request x-forwarded-proto:', request.headers.get('x-forwarded-proto'));
+  console.log('===================================');
 
   // Get stored values from cookies
   const storedState = cookies.get('github_oauth_state');
@@ -154,7 +166,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
         const sessionId = crypto.randomUUID();
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-        await db.insert(session).values({
+        await db.insert(sessionTable).values({
           id: sessionId,
           userId: linkedUser.id,
           token: sessionToken,
@@ -165,14 +177,39 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
           userAgent: null
         });
 
-        // Set session cookie - MUST match Better Auth's cookie name
-        cookies.set('better-auth.session_token', sessionToken, {
-          path: '/',
-          httpOnly: true,
-          secure: isSecure,
-          sameSite: 'lax',
-          maxAge: 60 * 60 * 24 * 7
-        });
+        // Sign the cookie value like Better Auth does
+        // Better Auth uses format: token.signature
+        const encoder = new TextEncoder();
+        const key = await crypto.subtle.importKey(
+          'raw',
+          encoder.encode(BETTER_AUTH_SECRET),
+          { name: 'HMAC', hash: 'SHA-256' },
+          false,
+          ['sign']
+        );
+        const signature = await crypto.subtle.sign(
+          'HMAC',
+          key,
+          encoder.encode(sessionToken)
+        );
+        // Convert to base64url (no padding)
+        const signatureBase64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+
+        const signedToken = `${sessionToken}.${signatureBase64}`;
+
+        // Get the actual origin from request for cookie domain
+        const requestOrigin = url.origin; // e.g., "https://test2.owlscottage.com"
+        const authUrl = new URL(BETTER_AUTH_URL);
+        const authDomain = authUrl.hostname;
+
+        console.log(`[GitHub OAuth] Session created: ${sessionToken.substring(0, 8)}...`);
+        console.log(`[GitHub OAuth] Request origin: ${requestOrigin}`);
+        console.log(`[GitHub OAuth] Auth domain from env: ${authDomain}`);
+        console.log(`[GitHub OAuth] Signed token: ${signedToken.substring(0, 50)}...`);
+        console.log(`GitHub login successful for ${linkedUser.email}`);
 
         // Update linked account with new token
         await db.update(account)
@@ -182,23 +219,29 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
           })
           .where(eq(account.id, existingAccount.id));
 
-        console.log(`GitHub login successful for ${linkedUser.email}`);
-        throw redirect(303, callbackURL);
+        // WORKAROUND: Redirect to client-side page that will set cookie via fetch
+        // This avoids the cookie-on-redirect issue
+        console.log(`[GitHub OAuth] Redirecting to auth callback page with token...`);
+
+        // Encode token for URL
+        const encodedToken = encodeURIComponent(signedToken);
+
+        // Redirect to auth callback page with token in URL
+        return new Response(null, {
+          status: 302,
+          headers: {
+            'Location': `/auth/callback?token=${encodedToken}`
+          }
+        });
       }
 
-      // New user - redirect to registration with GitHub info
-      const githubUserInfo = btoa(JSON.stringify({
-        id: githubUser.id,
-        login: githubUser.login,
-        name: githubUser.name,
-        email: primaryEmail,
-        avatar_url: githubUser.avatar_url
-      }));
-
-      throw redirect(303, `/register?github=${githubUserInfo}`);
+      // New user - GitHub account not linked to any existing user
+      // Redirect to login with clear error message
+      throw redirect(303, '/login?error=github_not_linked');
     }
 
   } catch (err: any) {
+    // Re-throw SvelteKit redirects
     if (err.status === 303) throw err;
 
     console.error('GitHub OAuth error:', err);

@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { Header } from '$lib/components/layout';
-  import { Card, Button, Input } from '$lib/components/ui';
-  import { onMount } from 'svelte';
+  import { IsometricCard, PixelButton } from '$lib/components/ui';
+  import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { type Currency } from '$lib/utils/currency';
-  import { getExchangeRates, getUserPreferences, convertAmountMYR, getCachedRatesSync, getCachedPreferencesSync } from '$lib/stores/app-store';
+  import { getExchangeRates, getUserPreferences, getCachedRatesSync, getCachedPreferencesSync } from '$lib/stores/app-store.svelte';
+  import { subscribeToCurrency, convertAmountMYR, convertToMYR } from '$lib/stores/currency-store';
 
   // Currency settings
   const currencies: Record<string, { symbol: string; name: string; locale: string }> = {
@@ -13,7 +13,6 @@
     'USD': { symbol: '$', name: 'US Dollar', locale: 'en-US' }
   };
 
-  // PERFORMANCE: Cached formatters for each currency
   const formatters = {
     'en-MY': new Intl.NumberFormat('en-MY'),
     'en-SG': new Intl.NumberFormat('en-SG'),
@@ -24,8 +23,15 @@
     return formatters[locale as keyof typeof formatters]?.format(amount) || amount.toLocaleString();
   }
 
-  let selectedCurrency = $state<Currency>('MYR');
-  let exchangeRates: Record<string, Record<string, number>> = $state({});
+  // ============================================================
+  // NON-REACTIVE CURRENCY STATE - avoids reactive cycles
+  // Reactive trigger counter forces template re-render on currency change
+  // ============================================================
+  // svelte-ignore non_reactive_update
+  let selectedCurrency: Currency = (getCachedPreferencesSync()?.currency as Currency) || 'MYR';
+  // svelte-ignore non_reactive_update
+  let exchangeRates: Record<string, Record<string, number>> = getCachedRatesSync() || {};
+  let currencyUpdateCounter = $state(0);  // Reactive trigger
   
   interface Budget {
     id: string;
@@ -44,9 +50,8 @@
   let loading = $state(true);
   let error = $state('');
   
-  // Month/Year selector
   const currentDate = new Date();
-  let selectedMonth = $state(currentDate.getMonth()); // 0-11
+  let selectedMonth = $state(currentDate.getMonth());
   let selectedYear = $state(currentDate.getFullYear());
   
   const months = [
@@ -54,37 +59,24 @@
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
   
-  // Generate year options (current year -1 to +2)
   const years = Array.from({ length: 4 }, (_, i) => currentDate.getFullYear() - 1 + i);
   
-  // Manual Add Budget Modal
   let showAddModal = $state(false);
-  let newBudget = $state({
-    categoryName: '',
-    amount: '',
-    period: 'monthly'
-  });
+  let newBudget = $state({ categoryName: '', amount: '', period: 'monthly' });
   let addingBudget = $state(false);
   let addError = $state('');
 
-  // Edit Budget Modal
   let showEditModal = $state(false);
   let showEditConfirmModal = $state(false);
   let currentEditingBudget = $state<Budget | null>(null);
-  let editBudget = $state({
-    categoryName: '',
-    amount: '',
-    period: 'monthly'
-  });
+  let editBudget = $state({ categoryName: '', amount: '', period: 'monthly' });
   let savingEdit = $state(false);
   let editError = $state('');
 
-  // Delete Confirmation Modal
   let showDeleteConfirmModal = $state(false);
   let deletingBudgetId = $state<string | null>(null);
   let deletingBudget = $state(false);
   
-  // Preset categories for dropdown
   const presetCategories = [
     { name: 'Income', icon: 'payments', color: '#10b981' },
     { name: 'Food & Dining', icon: 'restaurant', color: '#f59e0b' },
@@ -101,78 +93,58 @@
     { name: 'Other', icon: 'category', color: '#6b7280' }
   ];
   
-  // Fetch user preferences (currency)
-  // PERFORMANCE: Use shared store for faster loading (cached from layout preload)
-  // First try synchronous cache (instant if preloaded), then async fetch if needed
+  let unsubscribeCurrency: (() => void) | undefined;
+
   onMount(async () => {
-    // Try to get cached data instantly (from layout preload)
-    const cachedRates = getCachedRatesSync();
-    const cachedPrefs = getCachedPreferencesSync();
-
-    if (cachedRates) {
-      exchangeRates = cachedRates;
-    }
-    if (cachedPrefs?.currency) {
-      selectedCurrency = cachedPrefs.currency;
-    }
-
-    // Fetch if not cached (should be rare due to layout preload)
     const [rates, prefs] = await Promise.all([
-      cachedRates ? cachedRates : getExchangeRates(),
-      cachedPrefs ? cachedPrefs : getUserPreferences()
+      getExchangeRates(),
+      getUserPreferences()
     ]);
 
-    if (!cachedRates) {
-      exchangeRates = rates;
-    }
-    if (!cachedPrefs && prefs?.currency) {
-      selectedCurrency = prefs.currency;
-    }
+    // svelte-ignore non_reactive_update
+    if (rates) exchangeRates = rates;
+    // svelte-ignore non_reactive_update
+    if (prefs?.currency) selectedCurrency = prefs.currency;
 
     await loadBudgets();
+
+    unsubscribeCurrency = subscribeToCurrency((currency, rates) => {
+      // svelte-ignore non_reactive_update
+      selectedCurrency = currency;
+      // svelte-ignore non_reactive_update
+      exchangeRates = rates;
+      currencyUpdateCounter++;  // Trigger template re-render
+    });
   });
 
-  // Convert amount from MYR to selected currency
+  onDestroy(() => {
+    unsubscribeCurrency?.();
+  });
+
   function convertAmount(amountMYR: number): number {
     return convertAmountMYR(amountMYR, selectedCurrency, exchangeRates);
   }
 
-  // Convert amount from selected currency back to MYR (for saving to database)
-  function convertToMYR(amount: number): number {
-    if (selectedCurrency === 'MYR') return amount;
-
-    const rate = exchangeRates.MYR?.[selectedCurrency];
-    if (rate && rate > 0) {
-      return Math.round((amount / rate) * 100) / 100;
-    }
-    // Fallback default rates
-    const defaultRates: Record<string, number> = { SGD: 0.31, USD: 0.22 };
-    const fallbackRate = defaultRates[selectedCurrency];
-    if (fallbackRate && fallbackRate > 0) {
-      return Math.round((amount / fallbackRate) * 100) / 100;
-    }
-    return amount;
+  function convertToMYRValue(amount: number): number {
+    return convertToMYR(amount, selectedCurrency, exchangeRates);
   }
   
   $effect(() => {
-    // Re-load when month/year changes
     const _ = selectedMonth + selectedYear;
     loadBudgets();
   });
-  
+
   async function loadBudgets() {
     loading = true;
     error = '';
 
     try {
-      // Fetch budgets
       const response = await fetch(`/api/budgets?month=${selectedMonth + 1}&year=${selectedYear}`, {
         credentials: 'include'
       });
 
       const data = await response.json();
 
-      // Fetch transactions to calculate spent
       const startDate = new Date(selectedYear, selectedMonth, 1).toISOString().split('T')[0];
       const endDate = new Date(selectedYear, selectedMonth + 1, 0).toISOString().split('T')[0];
       const txResponse = await fetch(`/api/transactions?startDate=${startDate}&endDate=${endDate}`, {
@@ -180,7 +152,6 @@
       });
       const txData = await txResponse.json();
 
-      // Calculate spent/income by category
       const spentByCategory: Record<string, number> = {};
       let incomeTotal = 0;
       let otherSpent = 0;
@@ -203,28 +174,26 @@
       if (data.budgets) {
         budgets = data.budgets.map((b: any) => ({
           ...b,
-          limitAmount: convertAmount(b.limitAmount), // Convert budget limit to selected currency
-          spent: convertAmount(spentByCategory[b.categoryName] || 0) // Convert spent to selected currency
+          limitAmount: b.limitAmount,
+          spent: spentByCategory[b.categoryName] || 0
         }));
 
-        // Add "Other" category as unlimited (always shown)
         budgets.push({
           id: 'other-unlimited',
           categoryName: 'Other',
           categoryIcon: 'category',
           categoryColor: '#6b7280',
-          limitAmount: -1, // -1 = unlimited
-          spent: convertAmount(otherSpent) // Convert to selected currency
+          limitAmount: -1,
+          spent: otherSpent
         });
 
-        // Add "Income" category (always shown, increases remaining)
         budgets.push({
           id: 'income-unlimited',
           categoryName: 'Income',
           categoryIcon: 'payments',
           categoryColor: '#10b981',
-          limitAmount: -1, // -1 = unlimited (income adds to remaining)
-          spent: convertAmount(incomeTotal) // Convert to selected currency
+          limitAmount: -1,
+          spent: incomeTotal
         });
       }
     } catch (err: any) {
@@ -251,7 +220,7 @@
         credentials: 'include',
         body: JSON.stringify({
           categoryName: newBudget.categoryName,
-          amount: convertToMYR(parseFloat(newBudget.amount)), // Convert to MYR for database
+          amount: convertToMYRValue(parseFloat(newBudget.amount)),
           period: newBudget.period,
           month: selectedMonth + 1,
           year: selectedYear
@@ -275,22 +244,18 @@
   }
   
   async function deleteBudget(id: string) {
-    // Show confirmation modal instead of browser confirm
     deletingBudgetId = id;
     showDeleteConfirmModal = true;
   }
 
   async function confirmDelete() {
     if (!deletingBudgetId) return;
-
     deletingBudget = true;
-
     try {
       const response = await fetch(`/api/budgets/${deletingBudgetId}`, {
         method: 'DELETE',
         credentials: 'include'
       });
-
       if (response.ok) {
         budgets = budgets.filter(b => b.id !== deletingBudgetId);
         showDeleteConfirmModal = false;
@@ -330,35 +295,28 @@
   }
 
   function initiateSaveEdit() {
-    // Validate
     if (!editBudget.categoryName || !editBudget.amount) {
       editError = 'Please fill in all fields';
       return;
     }
-
-    // Show confirmation modal
     showEditConfirmModal = true;
   }
 
   async function confirmSaveEdit() {
     if (!currentEditingBudget) return;
-
     savingEdit = true;
     editError = '';
-
     try {
       const response = await fetch(`/api/budgets/${currentEditingBudget.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          amount: convertToMYR(parseFloat(editBudget.amount)), // Convert to MYR for database
+          amount: convertToMYRValue(parseFloat(editBudget.amount)),
           period: editBudget.period
         })
       });
-
       const data = await response.json();
-
       if (data.success) {
         showEditConfirmModal = false;
         showEditModal = false;
@@ -373,28 +331,15 @@
     }
   }
 
-  function cancelEditSave() {
-    showEditConfirmModal = false;
-  }
+  function cancelEditSave() { showEditConfirmModal = false; }
+  function goToAICoach() { goto('/coach'); }
+  function openAddModal() { showAddModal = true; addError = ''; }
+  function closeAddModal() { showAddModal = false; newBudget = { categoryName: '', amount: '', period: 'monthly' }; addError = ''; }
   
-  function goToAICoach() {
-    goto('/coach');
-  }
-  
-  function openAddModal() {
-    showAddModal = true;
-    addError = '';
-  }
-  
-  function closeAddModal() {
-    showAddModal = false;
-    newBudget = { categoryName: '', amount: '', period: 'monthly' };
-    addError = '';
-  }
-  
-  function formatAmount(amount: number): string {
+  function formatAmount(amountMYR: number): string {
+    const convertedAmount = convertAmountMYR(amountMYR, selectedCurrency, exchangeRates);
     const curr = currencies[selectedCurrency];
-    return curr.symbol + ' ' + formatNumber(amount, curr.locale);
+    return curr.symbol + ' ' + formatNumber(convertedAmount, curr.locale);
   }
   
   function getPercentage(spent: number, limit: number): number {
@@ -410,13 +355,11 @@
     return 'safe';
   }
 
-  // Total Budget = budget limits + income (matches Dashboard formula)
   const totalBudget = $derived(budgets.reduce((sum, b) => b.limitAmount > 0 ? sum + b.limitAmount : sum, 0));
   const totalIncome = $derived(budgets.find(b => b.categoryName === 'Income')?.spent || 0);
   const totalBudgetWithIncome = $derived(totalBudget + totalIncome);
   const totalSpent = $derived(budgets.reduce((sum, b) => b.categoryName === 'Income' ? sum : sum + b.spent, 0));
   const remaining = $derived(totalBudgetWithIncome - totalSpent);
-
   const selectedMonthYear = $derived(`${months[selectedMonth]} ${selectedYear}`);
 </script>
 
@@ -424,415 +367,296 @@
   <title>Budget - MoneyKracked</title>
 </svelte:head>
 
-<!-- Page Header with Month Selector -->
-<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
-  <div>
-    <h2 class="text-3xl font-black tracking-tight text-white">Budget</h2>
-    <p class="mt-1 text-base text-text-secondary">Set spending limits and track your progress</p>
-  </div>
-  
-  <!-- Month/Year Selector -->
-  <div class="flex items-center gap-2">
-    <button
-      onclick={() => {
-        if (selectedMonth === 0) {
-          selectedMonth = 11;
-          selectedYear--;
-        } else {
-          selectedMonth--;
-        }
-      }}
-      class="p-2 rounded-lg bg-surface-dark border border-border-dark text-text-secondary hover:text-white hover:border-primary transition-colors"
-    >
-      <span class="material-symbols-outlined">chevron_left</span>
-    </button>
-    
-    <div class="flex items-center gap-2 px-4 py-2 rounded-lg bg-surface-dark border border-border-dark">
-      <span class="material-symbols-outlined text-primary">calendar_month</span>
-      <select
-        bind:value={selectedMonth}
-        class="bg-transparent text-white font-medium focus:outline-none cursor-pointer"
-      >
-        {#each months as month, i}
-          <option value={i} class="bg-surface-dark">{month}</option>
-        {/each}
-      </select>
-      <select
-        bind:value={selectedYear}
-        class="bg-transparent text-white font-medium focus:outline-none cursor-pointer"
-      >
-        {#each years as year}
-          <option value={year} class="bg-surface-dark">{year}</option>
-        {/each}
-      </select>
-    </div>
-    
-    <button
-      onclick={() => {
-        if (selectedMonth === 11) {
-          selectedMonth = 0;
-          selectedYear++;
-        } else {
-          selectedMonth++;
-        }
-      }}
-      class="p-2 rounded-lg bg-surface-dark border border-border-dark text-text-secondary hover:text-white hover:border-primary transition-colors"
-    >
-      <span class="material-symbols-outlined">chevron_right</span>
-    </button>
-  </div>
-</div>
+<!-- Currency reactive trigger - forces re-render when currency changes -->
+{#if currencyUpdateCounter >= 0}<!-- {currencyUpdateCounter} -->{/if}
+
+<div class="flex h-[calc(100%+2rem)] lg:h-[calc(100%+4rem)] w-[calc(100%+4rem)] overflow-hidden bg-[var(--color-bg)] -m-4 lg:-m-8 border-black">
+  <!-- Main Budget Column -->
+  <div class="flex-1 flex flex-col min-w-0 h-full relative bg-[var(--color-bg)]">
+    <!-- App-like Inline Header -->
+    <header class="h-20 flex items-center justify-between px-6 lg:px-10 border-b-4 border-black bg-[var(--color-surface-raised)] flex-shrink-0 z-20 shadow-lg">
+      <div class="flex items-center gap-4">
+        <div>
+          <h2 class="text-xl font-display text-[var(--color-primary)]">BUDGET <span class="text-[var(--color-text)]">PLANNER</span></h2>
+          <p class="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
+            <span class="flex h-2 w-2 rounded-full bg-[var(--color-primary)] animate-pulse"></span>
+            Limits for {selectedMonthYear}
+          </p>
+        </div>
+      </div>
+      
+      <div class="flex items-center gap-4">
+        <!-- Month/Year Selector -->
+        <div class="hidden sm:flex items-center gap-2">
+          <button onclick={() => { if (selectedMonth===0) {selectedMonth=11;selectedYear--;} else selectedMonth--; }}
+            class="h-10 w-10 border-2 border-black bg-[var(--color-surface)] flex items-center justify-center hover:bg-[var(--color-surface-raised)] transition-colors"
+          >
+            <span class="material-symbols-outlined">chevron_left</span>
+          </button>
+          
+          <div class="flex h-10 items-center gap-2 px-3 border-2 border-black bg-[var(--color-surface)]">
+            <select bind:value={selectedMonth} class="bg-transparent text-[var(--color-text)] font-mono text-[10px] uppercase font-bold focus:outline-none cursor-pointer">
+              {#each months as month, i} <option value={i} class="bg-[var(--color-surface)] font-mono">{month}</option> {/each}
+            </select>
+            <div class="w-px h-4 bg-black/20"></div>
+            <select bind:value={selectedYear} class="bg-transparent text-[var(--color-text)] font-mono text-[10px] uppercase font-bold focus:outline-none cursor-pointer">
+              {#each years as year} <option value={year} class="bg-[var(--color-surface)] font-mono">{year}</option> {/each}
+            </select>
+          </div>
+          
+          <button onclick={() => { if (selectedMonth===11) {selectedMonth=0;selectedYear++;} else selectedMonth++; }}
+            class="h-10 w-10 border-2 border-black bg-[var(--color-surface)] flex items-center justify-center hover:bg-[var(--color-surface-raised)] transition-colors"
+          >
+            <span class="material-symbols-outlined">chevron_right</span>
+          </button>
+        </div>
+
+        <PixelButton variant="primary" onclick={openAddModal} class="h-10 text-[10px] py-2 px-4">
+          <span class="material-symbols-outlined text-sm">add</span> ADD BUDGET
+        </PixelButton>
+      </div>
+    </header>
+
+    <!-- Scrollable Content Area -->
+    <div class="flex-1 overflow-y-auto p-6 lg:p-10 space-y-8 scroll-smooth custom-scrollbar">
 
 <!-- Budget Overview -->
 <div class="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
-  <Card>
-    <p class="text-sm font-medium text-text-secondary">Total Budget</p>
-    <h3 class="mt-2 text-2xl font-bold text-white">
+  <IsometricCard class="bg-[var(--color-surface)]">
+    <p class="text-xs font-mono text-[var(--color-text-muted)] uppercase tracking-widest">Total Budget</p>
+    <h3 class="mt-2 text-2xl font-bold font-mono text-[var(--color-text)]">
       {totalBudgetWithIncome > 0 ? formatAmount(totalBudgetWithIncome) : '-'}
     </h3>
-    <p class="text-xs text-text-muted mt-1">{selectedMonthYear}</p>
-  </Card>
-  <Card>
-    <p class="text-sm font-medium text-text-secondary">Total Spent</p>
-    <h3 class="mt-2 text-2xl font-bold text-warning">
+  </IsometricCard>
+  <IsometricCard>
+    <p class="text-xs font-mono text-[var(--color-text-muted)] uppercase tracking-widest">Total Spent</p>
+    <h3 class="mt-2 text-2xl font-bold font-mono text-[var(--color-warning)]">
       {totalSpent > 0 ? formatAmount(totalSpent) : '-'}
     </h3>
-  </Card>
-  <Card>
-    <p class="text-sm font-medium text-text-secondary">Remaining</p>
-    <h3 class="mt-2 text-2xl font-bold {remaining >= 0 ? 'text-primary' : 'text-danger'}">
+  </IsometricCard>
+  <IsometricCard>
+    <p class="text-xs font-mono text-[var(--color-text-muted)] uppercase tracking-widest">Remaining</p>
+    <h3 class="mt-2 text-2xl font-bold font-mono {remaining >= 0 ? 'text-[var(--color-primary)]' : 'text-[var(--color-danger)]'}">
       {totalBudgetWithIncome > 0 ? formatAmount(Math.abs(remaining)) : '-'}
-      {#if remaining < 0 && totalBudgetWithIncome > 0}
-        <span class="text-sm font-normal text-danger">(over budget)</span>
-      {/if}
     </h3>
-  </Card>
+    {#if remaining < 0 && totalBudgetWithIncome > 0}
+         <span class="text-xs text-[var(--color-danger)] uppercase font-bold">[OVER BUDGET]</span>
+    {/if}
+  </IsometricCard>
 </div>
 
 <!-- Category Budgets -->
-<Card padding="lg">
+<IsometricCard title="Budget Details">
   <div class="flex items-center justify-between mb-6">
-    <h3 class="text-lg font-bold text-white">Category Budgets</h3>
-    <div class="flex gap-2">
-      <Button variant="secondary" size="sm" onclick={goToAICoach}>
-        {#snippet icon()}
-          <span class="material-symbols-outlined text-lg">smart_toy</span>
-        {/snippet}
-        Ask AI
-      </Button>
-      <Button size="sm" onclick={openAddModal}>
-        {#snippet icon()}
-          <span class="material-symbols-outlined text-lg">add</span>
-        {/snippet}
-        Add Budget
-      </Button>
+    <h3 class="text-sm font-bold font-display uppercase text-[var(--color-text)] hidden sm:block">Categories</h3>
+    <div class="flex gap-2 w-full sm:w-auto justify-end">
+      <PixelButton variant="secondary" onclick={goToAICoach}>
+         <span class="material-symbols-outlined text-sm">smart_toy</span>
+         <span>AI Setup</span>
+      </PixelButton>
+      <PixelButton variant="primary" onclick={openAddModal}>
+         <span class="material-symbols-outlined text-sm">add</span>
+         <span>Add Budget</span>
+      </PixelButton>
     </div>
   </div>
   
   {#if loading}
-    <div class="py-12 text-center">
-      <div class="inline-block animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent"></div>
-      <p class="text-text-muted mt-4">Loading budgets...</p>
+    <div class="py-12 text-center col-span-full">
+      <div class="inline-block animate-spin h-8 w-8 border-4 border-[var(--color-primary)] border-t-transparent mb-4"></div>
+      <p class="text-[var(--color-text-muted)] font-mono">Loading Budgets...</p>
     </div>
   {:else if error}
     <div class="py-12 text-center">
-      <span class="material-symbols-outlined text-5xl text-danger mb-4">error</span>
-      <p class="text-danger">{error}</p>
-      <Button variant="secondary" onclick={loadBudgets} class="mt-4">Retry</Button>
+      <span class="material-symbols-outlined text-5xl text-[var(--color-danger)] mb-4">error</span>
+      <p class="text-[var(--color-danger)] font-mono">{error}</p>
+      <PixelButton onclick={loadBudgets} class="mt-4">Retry</PixelButton>
     </div>
   {:else if budgets.length > 0}
-    <div class="space-y-6">
+    <div class="space-y-4">
       {#each budgets as budget}
         {@const isUnlimited = budget.limitAmount === -1}
         {@const isIncome = budget.categoryName === 'Income'}
         {@const percentage = isUnlimited ? 0 : getPercentage(budget.spent, budget.limitAmount)}
         {@const status = isUnlimited ? 'normal' : getStatus(budget.spent, budget.limitAmount)}
 
-        <div class="space-y-2">
-          <div class="flex items-center justify-between">
+        <div class="p-4 border-2 border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm hover:translate-x-1 transition-transform">
+          <div class="flex items-center justify-between mb-2">
             <div class="flex items-center gap-3">
               <div
-                class="flex h-10 w-10 items-center justify-center rounded-lg"
+                class="flex h-10 w-10 items-center justify-center border-2 border-[var(--color-border)] shadow-[2px_2px_0px_0px_var(--color-shadow)]"
                 style="background-color: {budget.categoryColor}20; color: {budget.categoryColor}"
               >
                 <span class="material-symbols-outlined">{budget.categoryIcon}</span>
               </div>
               <div>
-                <p class="font-medium text-white">{budget.categoryName}</p>
+                <p class="font-bold text-[var(--color-text)] font-ui">{budget.categoryName}</p>
                 {#if isIncome}
-                  <p class="text-xs text-green-400">
-                    +{formatAmount(budget.spent)} received
-                  </p>
+                  <p class="text-xs text-[var(--color-success)] font-mono">+{formatAmount(budget.spent)}</p>
                 {:else if isUnlimited}
-                  <p class="text-xs text-text-muted">
-                    {formatAmount(budget.spent)} spent
-                  </p>
+                  <p class="text-xs text-[var(--color-text-muted)] font-mono">{formatAmount(budget.spent)} spent</p>
                 {:else}
-                  <p class="text-xs text-text-muted">
-                    {formatAmount(budget.spent)} / {formatAmount(budget.limitAmount)}
+                  <p class="text-xs text-[var(--color-text-muted)] font-mono">
+                    Spent: {formatAmount(budget.spent)} <span class="text-[var(--color-text)]">/</span> Limit: {formatAmount(budget.limitAmount)}
                   </p>
                 {/if}
               </div>
             </div>
-            <div class="flex items-center gap-3">
-              <div class="text-right">
+             <div class="flex items-center gap-3">
+               <div class="text-right">
                 {#if isIncome}
-                  <p class="font-bold text-green-400">Income</p>
-                  <p class="text-xs text-text-muted">Adds to remaining</p>
+                  <p class="font-bold text-[var(--color-success)] font-mono">Income</p>
                 {:else if isUnlimited}
-                  <p class="font-bold text-blue-400">Unlimited</p>
-                  <p class="text-xs text-text-muted">No limit</p>
+                  <p class="font-bold text-[var(--color-info)] font-mono">Unlimited</p>
                 {:else}
-                  <p class="font-bold {status === 'danger' ? 'text-danger' : status === 'warning' ? 'text-warning' : 'text-white'}">
+                  <p class="font-bold font-mono {status === 'danger' ? 'text-[var(--color-danger)]' : status === 'warning' ? 'text-[var(--color-warning)]' : 'text-[var(--color-text)]'}">
                     {percentage.toFixed(0)}%
                   </p>
                   {#if budget.spent > budget.limitAmount}
-                    <p class="text-xs text-danger">+{formatAmount(budget.spent - budget.limitAmount)} over</p>
+                    <p class="text-xs text-[var(--color-danger)] font-mono">+{formatAmount(budget.spent - budget.limitAmount)} over</p>
                   {:else}
-                    <p class="text-xs text-text-muted">{formatAmount(budget.limitAmount - budget.spent)} left</p>
+                    <p class="text-xs text-[var(--color-text-muted)] font-mono">{formatAmount(budget.limitAmount - budget.spent)} left</p>
                   {/if}
                 {/if}
               </div>
+              
               {#if !isUnlimited && !isIncome}
-                <div class="flex items-center gap-1">
-                  <button
-                    onclick={() => openEditModal(budget)}
-                    class="p-1 text-text-muted hover:text-primary transition-colors"
-                    title="Edit budget"
-                  >
-                    <span class="material-symbols-outlined text-lg">edit</span>
-                  </button>
-                  <button
-                    onclick={() => deleteBudget(budget.id)}
-                    class="p-1 text-text-muted hover:text-danger transition-colors"
-                    title="Delete budget"
-                  >
-                    <span class="material-symbols-outlined text-lg">delete</span>
-                  </button>
+                <div class="flex items-center gap-1 opacity-50 hover:opacity-100 transition-opacity">
+                    <button onclick={() => openEditModal(budget)} class="p-1 hover:text-[var(--color-primary)]"><span class="material-symbols-outlined text-lg">edit</span></button>
+                    <button onclick={() => deleteBudget(budget.id)} class="p-1 hover:text-[var(--color-danger)]"><span class="material-symbols-outlined text-lg">delete</span></button>
                 </div>
               {/if}
-            </div>
+             </div>
           </div>
-
-          <!-- Progress Bar (not for unlimited or income) -->
-          {#if !isUnlimited && !isIncome}
-            <div class="h-2 rounded-full bg-border-dark overflow-hidden">
+          
+           <!-- Progress Bar -->
+           {#if !isUnlimited && !isIncome}
+            <div class="h-4 bg-[var(--color-bg)] border-2 border-[var(--color-border)] relative mt-2">
               <div 
-                class="h-full rounded-full transition-all duration-500"
-                style="width: {percentage}%; background-color: {status === 'danger' ? '#ef4444' : status === 'warning' ? '#f59e0b' : budget.categoryColor}"
+                class="h-full absolute top-0 left-0 transition-all duration-500"
+                style="width: {percentage}%; background-color: {status === 'danger' ? 'var(--color-danger)' : status === 'warning' ? 'var(--color-warning)' : 'var(--color-success)'}"
               ></div>
+              <!-- Grid lines on progress bar -->
+              <div class="absolute inset-0 bg-[url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAIklEQVQIW2NkQAKrVq36zwjjgzhhYWGMYAEYB8RmROaABADeOQ8CXl/xfgAAAABJRU5ErkJggg==')] opacity-20"></div>
             </div>
           {/if}
         </div>
       {/each}
     </div>
   {:else}
-    <div class="py-12 text-center">
-      <span class="material-symbols-outlined text-5xl text-text-muted mb-4">savings</span>
-      <h3 class="text-lg font-semibold text-white mb-2">No budgets for {selectedMonthYear}</h3>
-      <p class="text-text-muted mb-6 max-w-sm mx-auto">
-        Create a budget manually or let AI help you plan
-      </p>
-      <div class="flex justify-center gap-3">
-        <Button variant="secondary" onclick={goToAICoach}>
-          {#snippet icon()}
-            <span class="material-symbols-outlined">smart_toy</span>
-          {/snippet}
-          Setup with AI
-        </Button>
-        <Button onclick={openAddModal}>
-          {#snippet icon()}
-            <span class="material-symbols-outlined">add</span>
-          {/snippet}
-          Add Manually
-        </Button>
-      </div>
+    <div class="p-12 text-center">
+      <span class="material-symbols-outlined text-5xl text-[var(--color-text-muted)] mb-4">savings</span>
+      <h3 class="text-lg font-bold text-[var(--color-text)] mb-2 font-display uppercase">No Budgets</h3>
+      <p class="text-[var(--color-text-muted)] mb-6 font-mono text-sm">Create a budget manually or let AI help you plan.</p>
     </div>
   {/if}
-</Card>
+</IsometricCard>
 
 <!-- Add Budget Modal -->
 {#if showAddModal}
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-    <div class="bg-surface-dark rounded-2xl border border-border-dark w-full max-w-md mx-4 shadow-2xl">
-      <div class="p-6 border-b border-border-dark">
-        <div class="flex items-center justify-between">
-          <h3 class="text-lg font-bold text-white">Add Budget</h3>
-          <button onclick={closeAddModal} class="text-text-muted hover:text-white">
-            <span class="material-symbols-outlined">close</span>
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+    <div class="bg-[var(--color-surface)] border-4 border-[var(--color-border)] shadow-[var(--shadow-primary)] w-full max-w-md">
+      <div class="flex items-center justify-between p-4 border-b-4 border-[var(--color-border)] bg-[var(--color-surface-raised)]">
+          <h3 class="text-lg font-bold text-[var(--color-text)] font-display uppercase">New Budget</h3>
+          <button onclick={closeAddModal} class="text-[var(--color-text-muted)] hover:text-[var(--color-danger)]">
+            <span class="material-symbols-outlined font-bold">close</span>
           </button>
-        </div>
-        <p class="text-sm text-text-muted mt-1">For {selectedMonthYear}</p>
       </div>
-      
       <div class="p-6 space-y-4">
-        {#if addError}
-          <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm">
-            {addError}
-          </div>
-        {/if}
-        
-        <!-- Category Select -->
-        <div>
-          <label for="budget-category" class="block text-sm font-medium text-text-secondary mb-1.5">Category</label>
-          <select
-            id="budget-category"
-            bind:value={newBudget.categoryName}
-            class="w-full px-4 py-2.5 rounded-lg bg-bg-dark border border-border-dark text-white focus:outline-none focus:ring-2 focus:ring-primary"
-          >
-            <option value="">Select category...</option>
-            {#each presetCategories.filter(c => c.name !== 'Income' && c.name !== 'Other') as cat}
-              <option value={cat.name}>{cat.name}</option>
-            {/each}
-          </select>
-          <p class="text-xs text-text-muted mt-1">
-            Income & Other are added automatically
-          </p>
-        </div>
-        
-        <!-- Amount -->
-        <div>
-          <label for="budget-amount" class="block text-sm font-medium text-text-secondary mb-1.5">
-            Budget Amount ({currencies[selectedCurrency].symbol})
-          </label>
-          <input
-            id="budget-amount"
-            type="number"
-            placeholder="e.g. 500"
-            bind:value={newBudget.amount}
-            class="w-full px-4 py-2.5 rounded-lg bg-bg-dark border border-border-dark text-white placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary"
-          />
-        </div>
+         {#if addError} <p class="text-[var(--color-danger)] font-mono text-xs border border-[var(--color-danger)] p-2">{addError}</p> {/if}
+         
+         <div>
+            <label for="b-cat" class="block text-xs font-bold text-[var(--color-text-muted)] font-mono mb-1 uppercase">Category</label>
+            <div class="relative">
+                <select id="b-cat" bind:value={newBudget.categoryName} class="iso-input appearance-none">
+                    <option value="">Select...</option>
+                    {#each presetCategories.filter(c => c.name !== 'Income' && c.name !== 'Other') as cat}
+                        <option value={cat.name}>{cat.name}</option>
+                    {/each}
+                </select>
+                <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[var(--color-text-muted)]">expand_more</span>
+            </div>
+         </div>
+         
+         <div>
+            <label for="b-amount" class="block text-xs font-bold text-[var(--color-text-muted)] font-mono mb-1 uppercase">Limit ({currencies[selectedCurrency].symbol})</label>
+            <input id="b-amount" type="number" bind:value={newBudget.amount} class="iso-input text-xl font-bold font-mono" placeholder="0" />
+         </div>
       </div>
-      
-      <div class="p-6 border-t border-border-dark flex justify-end gap-3">
-        <Button variant="secondary" onclick={closeAddModal} disabled={addingBudget}>
-          Cancel
-        </Button>
-        <Button onclick={addBudget} loading={addingBudget}>
-          Add Budget
-        </Button>
+      <div class="p-4 border-t-4 border-[var(--color-border)] bg-[var(--color-surface-raised)] flex justify-end gap-3">
+          <PixelButton variant="ghost" onclick={closeAddModal} disabled={addingBudget}>Cancel</PixelButton>
+          <PixelButton variant="primary" onclick={addBudget} loading={addingBudget}>Confirm</PixelButton>
       </div>
     </div>
   </div>
 {/if}
 
-<!-- Edit Budget Modal -->
-{#if showEditModal && currentEditingBudget}
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-    <div class="bg-surface-dark rounded-2xl border border-border-dark w-full max-w-md mx-4 shadow-2xl">
-      <div class="p-6 border-b border-border-dark">
-        <div class="flex items-center justify-between">
-          <h3 class="text-lg font-bold text-white">Edit Budget</h3>
-          <button onclick={closeEditModal} class="text-text-muted hover:text-white">
-            <span class="material-symbols-outlined">close</span>
-          </button>
-        </div>
-        <p class="text-sm text-text-muted mt-1">{currentEditingBudget.categoryName}</p>
-      </div>
-
-      <div class="p-6 space-y-4">
-        {#if editError}
-          <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm">
-            {editError}
-          </div>
-        {/if}
-
-        <!-- Category (read-only, can't change when editing) -->
-        <div>
-          <span class="block text-sm font-medium text-text-secondary mb-1.5">Category</span>
-          <div class="px-4 py-2.5 rounded-lg bg-bg-dark/50 border border-border-dark text-text-muted">
-            {editBudget.categoryName}
-          </div>
-        </div>
-
-        <!-- Amount -->
-        <div>
-          <label for="edit-budget-amount" class="block text-sm font-medium text-text-secondary mb-1.5">
-            Budget Amount ({currencies[selectedCurrency].symbol})
-          </label>
-          <input
-            id="edit-budget-amount"
-            type="number"
-            placeholder="e.g. 500"
-            bind:value={editBudget.amount}
-            class="w-full px-4 py-2.5 rounded-lg bg-bg-dark border border-border-dark text-white placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary"
-          />
-        </div>
-      </div>
-
-      <div class="p-6 border-t border-border-dark flex justify-end gap-3">
-        <Button variant="secondary" onclick={closeEditModal} disabled={savingEdit}>
-          Cancel
-        </Button>
-        <Button onclick={initiateSaveEdit} disabled={savingEdit}>
-          Save Changes
-        </Button>
-      </div>
-    </div>
-  </div>
-{/if}
-
-<!-- Edit Confirmation Modal -->
-{#if showEditConfirmModal && currentEditingBudget}
-  <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-    <div class="bg-surface-dark rounded-2xl border border-border-dark w-full max-w-sm mx-4 shadow-2xl">
-      <div class="p-6 text-center">
-        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/20 mb-4">
-          <span class="material-symbols-outlined text-primary text-2xl">edit</span>
-        </div>
-        <h3 class="text-lg font-bold text-white mb-2">Save Budget Changes?</h3>
-        <p class="text-text-secondary text-sm mb-4">
-          Are you sure you want to update <strong class="text-white">{currentEditingBudget.categoryName}</strong> budget to <strong class="text-primary">{currencies[selectedCurrency].symbol} {parseFloat(editBudget.amount).toLocaleString()}</strong>?
-        </p>
-
-        {#if editError}
-          <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm mb-4">
-            {editError}
-          </div>
-        {/if}
-
-        <div class="flex gap-3">
-          <Button variant="secondary" onclick={cancelEditSave} disabled={savingEdit} class="flex-1">
-            Cancel
-          </Button>
-          <Button onclick={confirmSaveEdit} loading={savingEdit} class="flex-1">
-            Confirm & Save
-          </Button>
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
-
-<!-- Delete Confirmation Modal -->
+<!-- Helper Modals (Delete/Edit) -->
 {#if showDeleteConfirmModal}
-  <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-    <div class="bg-surface-dark rounded-2xl border border-border-dark w-full max-w-sm mx-4 shadow-2xl">
-      <div class="p-6 text-center">
-        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-danger/20 mb-4">
-          <span class="material-symbols-outlined text-danger text-2xl">delete</span>
+    <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+        <div class="bg-[var(--color-surface)] border-4 border-[var(--color-border)] shadow-[var(--shadow-primary)] p-6 max-w-sm text-center">
+            <span class="material-symbols-outlined text-5xl text-[var(--color-danger)] mb-4">delete_forever</span>
+            <h3 class="text-xl font-bold text-[var(--color-text)] font-display uppercase mb-2">Delete Budget?</h3>
+             <div class="flex justify-center gap-4 mt-6">
+                <PixelButton variant="ghost" onclick={cancelDelete} disabled={deletingBudget}>Cancel</PixelButton>
+                <PixelButton variant="danger" onclick={confirmDelete} loading={deletingBudget}>Delete</PixelButton>
+            </div>
         </div>
-        <h3 class="text-lg font-bold text-white mb-2">Delete Budget?</h3>
-        <p class="text-text-secondary text-sm mb-4">
-          Are you sure you want to delete this budget? This action cannot be undone.
-        </p>
+    </div>
+{/if}
+    </div>
+  </div>
 
-        {#if editError}
-          <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm mb-4">
-            {editError}
-          </div>
-        {/if}
-
-        <div class="flex gap-3">
-          <Button variant="secondary" onclick={cancelDelete} disabled={deletingBudget} class="flex-1">
-            Cancel
-          </Button>
-          <Button onclick={confirmDelete} loading={deletingBudget} variant="danger" class="flex-1">
-            Delete
-          </Button>
-        </div>
+{#if showEditModal && currentEditingBudget}
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+    <div class="bg-[var(--color-surface)] border-4 border-[var(--color-border)] shadow-[var(--shadow-primary)] w-full max-w-md">
+      <div class="p-4 border-b-4 border-[var(--color-border)] bg-[var(--color-surface-raised)] flex justify-between">
+          <h3 class="text-lg font-bold text-[var(--color-text)] font-display uppercase">Edit Budget</h3>
+          <button onclick={closeEditModal}><span class="material-symbols-outlined">close</span></button>
+      </div>
+      <div class="p-6 space-y-4">
+         {#if editError} <p class="text-[var(--color-danger)] font-mono text-xs">{editError}</p> {/if}
+         <div class="p-2 bg-[var(--color-bg)] border-2 border-[var(--color-border)]">
+            <span class="block text-xs font-mono text-[var(--color-text-muted)] uppercase">Category</span>
+            <span class="font-bold text-[var(--color-text)] font-display">{editBudget.categoryName}</span>
+         </div>
+         <div>
+            <label for="eb-amount" class="block text-xs font-bold text-[var(--color-text-muted)] font-mono mb-1 uppercase">Limit ({currencies[selectedCurrency].symbol})</label>
+            <input id="eb-amount" type="number" bind:value={editBudget.amount} class="iso-input text-xl font-bold font-mono" />
+         </div>
+      </div>
+      <div class="p-4 border-t-4 border-[var(--color-border)] bg-[var(--color-surface-raised)] flex justify-end gap-3">
+          <PixelButton variant="ghost" onclick={closeEditModal} disabled={savingEdit}>Cancel</PixelButton>
+          <PixelButton variant="primary" onclick={initiateSaveEdit}>Save</PixelButton>
       </div>
     </div>
   </div>
 {/if}
+
+{#if showEditConfirmModal}
+     <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+        <div class="bg-[var(--color-surface)] border-4 border-[var(--color-border)] shadow-[var(--shadow-primary)] p-6 max-w-sm text-center">
+            <span class="material-symbols-outlined text-5xl text-[var(--color-primary)] mb-4">save</span>
+            <h3 class="text-xl font-bold text-[var(--color-text)] font-display uppercase mb-2">Save Changes?</h3>
+            <div class="flex justify-center gap-4 mt-4">
+                <PixelButton variant="ghost" onclick={cancelEditSave} disabled={savingEdit}>Back</PixelButton>
+                <PixelButton variant="primary" onclick={confirmSaveEdit} loading={savingEdit}>Confirm</PixelButton>
+            </div>
+        </div>
+    </div>
+{/if}
+</div>
+
+<style>
+    .custom-scrollbar::-webkit-scrollbar {
+        width: 12px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+        background: var(--color-bg);
+        border-left: 2px solid rgba(0,0,0,0.1);
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: var(--color-surface-raised);
+        border: 2px solid var(--color-border);
+    }
+</style>

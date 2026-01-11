@@ -1,23 +1,41 @@
 import { db } from '$lib/server/db';
-import { exchangeRates, budgets, transactions } from '$lib/server/db/schema';
+import { budgets, transactions } from '$lib/server/db/schema';
 import { eq, and, gte, lte } from 'drizzle-orm';
 import type { PageServerLoad } from './$types';
+import { redirect } from '@sveltejs/kit';
 
 /**
- * Preload ALL dashboard data on server for instant display
- * This eliminates client-side fetching time
+ * Preload dashboard data on server for instant display
+ * Exchange rates come from layout load (cached)
  */
-export const load: PageServerLoad = async ({ locals, cookies }) => {
+export const load: PageServerLoad = async ({ locals, cookies, url }) => {
+	// Check for auth_token in URL (from OAuth callback)
+	const authToken = url.searchParams.get('auth_token');
+	if (authToken) {
+		console.log('[Dashboard] Found auth_token in URL, setting cookie...');
+		// Set the cookie server-side
+		cookies.set('better-auth.session_token', authToken, {
+			path: '/',
+			httpOnly: true,
+			sameSite: 'none', // Try 'none' for cross-origin
+			secure: true, // Use true for HTTPS
+			maxAge: 60 * 60 * 24 * 7 // 7 days
+		});
+		console.log('[Dashboard] Cookie set, redirecting to dashboard without token...');
+
+		// Redirect to dashboard without the token in URL
+		throw redirect(302, '/dashboard');
+	}
 	// Get current month/year for dashboard
 	const now = new Date();
 	const month = now.getMonth() + 1;
 	const year = now.getFullYear();
 
-	// Start and end of current month (as ISO strings for database comparison)
+	// Start and end of current month
 	const startDateStr = new Date(year, month - 1, 1).toISOString();
 	const endDateStr = new Date(year, month, 0, 23, 59, 59).toISOString();
 
-	// Get currency from cookie (not database)
+	// Get currency from cookie (fast)
 	let currency = 'MYR';
 	try {
 		const prefsCookie = cookies.get('user-preferences');
@@ -27,12 +45,9 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		}
 	} catch { }
 
-	// Run all queries in parallel for maximum speed
-	const [ratesData, budgetData, txData] = await Promise.all([
-		// Exchange rates
-		db.query.exchangeRates.findMany(),
-
-		// Budgets - get all and filter by date in JS (simpler, more reliable)
+	// Run queries in parallel for maximum speed
+	const [budgetData, txData] = await Promise.all([
+		// Budgets
 		db.query.budgets.findMany({
 			where: eq(budgets.userId, locals.user?.id || ''),
 			with: {
@@ -55,24 +70,14 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		})
 	]);
 
-	// Filter budgets by date range (budget overlaps with current month)
+	// Filter budgets by date range
 	const startDate = new Date(startDateStr);
 	const endDate = new Date(endDateStr);
 	const filteredBudgets = budgetData.filter((b) => {
 		const budgetStart = b.startDate ? new Date(b.startDate) : null;
 		const budgetEnd = b.endDate ? new Date(b.endDate) : null;
-		// Budget overlaps if: budget.start <= month.end AND budget.end >= month.start
 		return (!budgetStart || budgetStart <= endDate) && (!budgetEnd || budgetEnd >= startDate);
 	});
-
-	// Build exchange rates map
-	const ratesMap: Record<string, Record<string, number>> = {};
-	for (const rate of ratesData) {
-		if (!ratesMap[rate.fromCurrency]) {
-			ratesMap[rate.fromCurrency] = {};
-		}
-		ratesMap[rate.fromCurrency][rate.toCurrency] = parseFloat(rate.rate as string);
-	}
 
 	// Format budgets for client
 	const formattedBudgets = filteredBudgets.map((b) => ({
@@ -81,7 +86,7 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 		categoryIcon: b.category?.icon || 'category',
 		categoryColor: b.category?.color || '#6b7280',
 		limitAmount: parseFloat(b.limitAmount as string),
-		spent: 0 // Will be calculated on client
+		spent: 0 // Calculated on client
 	}));
 
 	// Format transactions for client
@@ -97,7 +102,6 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
 	}));
 
 	return {
-		rates: ratesMap,
 		currency,
 		month,
 		year,

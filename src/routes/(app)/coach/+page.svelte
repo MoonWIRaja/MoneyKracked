@@ -1,15 +1,22 @@
 <script lang="ts">
   import { Header } from '$lib/components/layout';
-  import { Card, Button } from '$lib/components/ui';
-  import { onMount } from 'svelte';
+  import { IsometricCard, PixelButton } from '$lib/components/ui';
+  import { onMount, tick } from 'svelte';
+  import type { PageData } from './$types';
+
+  interface Props {
+    data: PageData;
+  }
+
+  let { data }: Props = $props();
 
   interface BudgetAction {
     action: 'create' | 'update' | 'delete';
     categoryName: string;
     amount: number;
     period: 'monthly' | 'weekly' | 'yearly';
-    month?: number; // 1-12, optional
-    year?: number; // e.g., 2026, optional
+    month?: number;
+    year?: number;
   }
 
   interface Message {
@@ -48,19 +55,16 @@
   let suggestions = $state<string[]>([]);
   let isLoadingSuggestions = $state(true);
 
-  // Chat history sidebar
   let chatSessions = $state<ChatSession[]>([]);
   let isLoadingSessions = $state(false);
   let showSidebar = $state(true);
   let selectedSessionId = $state<string | null>(null);
 
-  // Delete session confirmation
   let showDeleteSessionModal = $state(false);
   let deletingSessionId = $state<string | null>(null);
   let deletingSession = $state(false);
   let deleteSessionError = $state('');
 
-  // Default suggestions while loading
   const defaultSuggestions = [
     "Setup my budget, salary RM4500",
     "Analyze my spending",
@@ -68,20 +72,34 @@
     "Tips to reduce my expenses"
   ];
 
-  // Load smart suggestions and chat history in parallel for faster loading
+  function formatAmount(amount: number): string {
+    return 'RM ' + amount.toLocaleString();
+  }
+
   onMount(async () => {
     await Promise.all([
       loadSuggestions(),
       loadChatHistory()
     ]);
+
+    const overspentContext = sessionStorage.getItem('overspentContext');
+    if (overspentContext) {
+      sessionStorage.removeItem('overspentContext');
+      try {
+        const overspent = JSON.parse(overspentContext);
+        const question = `I'm over budget in ${overspent.length} category${overspent.length > 1 ? 's' : ''}: ${overspent.map((o: any) => `${o.category} (over by ${formatAmount(o.over)})`).join(', ')}. What should I do?`;
+        input = question;
+        setTimeout(() => sendMessage(), 500);
+      } catch (e) {
+        console.error('Failed to parse overspent context:', e);
+      }
+    }
   });
 
   async function loadSuggestions() {
     isLoadingSuggestions = true;
     try {
-      const response = await fetch('/api/ai-chat?type=suggestions', {
-        credentials: 'include'
-      });
+      const response = await fetch('/api/ai-chat?type=suggestions', { credentials: 'include' });
       if (response.ok) {
         const data = await response.json();
         suggestions = data.suggestions || defaultSuggestions;
@@ -89,7 +107,6 @@
         suggestions = defaultSuggestions;
       }
     } catch (err) {
-      console.error('Load suggestions error:', err);
       suggestions = defaultSuggestions;
     } finally {
       isLoadingSuggestions = false;
@@ -99,9 +116,7 @@
   async function loadChatHistory() {
     isLoadingSessions = true;
     try {
-      const response = await fetch('/api/ai-chat?type=sessions', {
-        credentials: 'include'
-      });
+      const response = await fetch('/api/ai-chat?type=sessions', { credentials: 'include' });
       if (response.ok) {
         const data = await response.json();
         if (data.sessions && Array.isArray(data.sessions)) {
@@ -115,27 +130,18 @@
             sentiment: s.sentiment
           }));
         }
-      } else {
-        // Silently fail - no history is fine
-        chatSessions = [];
       }
-    } catch (err) {
-      console.error('Load chat history error:', err);
-      chatSessions = [];
     } finally {
       isLoadingSessions = false;
     }
   }
 
-  async function loadSessionMessages(sessionId: string) {
+  async function loadSessionMessages(idToLoad: string) {
     try {
-      const response = await fetch(`/api/ai-chat?type=messages&sessionId=${sessionId}`, {
-        credentials: 'include'
-      });
+      const response = await fetch(`/api/ai-chat?type=messages&sessionId=${idToLoad}`, { credentials: 'include' });
       if (response.ok) {
         const data = await response.json();
         if (data.messages && Array.isArray(data.messages)) {
-          // Convert to Message format - messages come in descending order, so reverse
           const loadedMessages = data.messages.reverse().map((m: any) => ({
             id: m.id,
             role: m.role,
@@ -144,12 +150,9 @@
             budgetActions: m.metadata?.budgetActions
           }));
           messages = loadedMessages;
-          selectedSessionId = sessionId;
-          // Scroll to bottom
-          setTimeout(() => {
-            const container = document.querySelector('[data-chat-container]');
-            if (container) container.scrollTop = container.scrollHeight;
-          }, 100);
+          sessionId = idToLoad;
+          selectedSessionId = idToLoad;
+          setTimeout(scrollToBottom, 100);
         }
       }
     } catch (err) {
@@ -170,6 +173,18 @@
     learnedInfo = null;
   }
 
+  function scrollToBottom() {
+    const container = document.querySelector('[data-chat-container]');
+    if (container) {
+      setTimeout(() => {
+        container.scrollTo({
+          top: container.scrollHeight,
+          behavior: 'smooth'
+        });
+      }, 50);
+    }
+  }
+
   async function sendMessage() {
     if (!input.trim() || isLoading) return;
 
@@ -185,6 +200,7 @@
     input = '';
     isLoading = true;
     learnedInfo = null;
+    tick().then(scrollToBottom);
 
     try {
       const response = await fetch('/api/ai-chat', {
@@ -205,62 +221,43 @@
       };
 
       messages = [...messages, assistantMessage];
+      tick().then(scrollToBottom);
 
-      // Update session ID for continuity
       if (data.sessionId) {
         sessionId = data.sessionId;
         selectedSessionId = data.sessionId;
       }
 
-      // Show what AI learned
       if (data.learnedProfile && Object.keys(data.learnedProfile).length > 0) {
         const learned = data.learnedProfile;
         const learnedBits: string[] = [];
         if (learned.monthlyIncome) learnedBits.push(`income: RM${learned.monthlyIncome}`);
-        if (learned.spendingPersonality) learnedBits.push(`spending style: ${learned.spendingPersonality}`);
+        if (learned.spendingPersonality) learnedBits.push(`style: ${learned.spendingPersonality}`);
         if (learned.primaryGoal) learnedBits.push(`goal: ${learned.primaryGoal}`);
-        if (learnedBits.length > 0) {
-          learnedInfo = `🧠 Learned: ${learnedBits.join(', ')}`;
-        }
+        if (learnedBits.length > 0) learnedInfo = `🧠 Learned: ${learnedBits.join(', ')}`;
       }
 
-      // If there are budget actions, show pending
       if (data.budgetActions && data.budgetActions.length > 0) {
-        console.log('[Coach] AI returned budget actions:', data.budgetActions);
         pendingActions = data.budgetActions;
       }
-
     } catch (err) {
-      console.error('Chat error:', err);
-      const errorMessage: Message = {
+      messages = [...messages, {
         id: crypto.randomUUID(),
         role: 'assistant',
-        content: "Sorry, I'm having trouble connecting right now. Please try again.",
+        content: "Sorry, I'm having trouble connecting right now.",
         timestamp: new Date()
-      };
-      messages = [...messages, errorMessage];
+      }];
     } finally {
       isLoading = false;
-      // Refresh suggestions after each message (they update based on popularity)
       loadSuggestions();
-      // Refresh chat history to show latest session
       loadChatHistory();
     }
   }
 
   async function applyBudgets() {
     if (!pendingActions || applyingBudgets) return;
-
     applyingBudgets = true;
-
     try {
-      console.log('[Coach] Applying budgets:', pendingActions.map(a => ({
-        categoryName: a.categoryName,
-        amount: a.amount,
-        month: a.month,
-        year: a.year
-      })));
-
       const response = await fetch('/api/budgets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -273,48 +270,34 @@
             month: a.month,
             year: a.year
           })),
-          clearExisting: true // Clear existing budgets for this month/year before creating new ones
+          clearExisting: true
         })
       });
-
       const data = await response.json();
-
       if (data.success) {
-        const confirmMessage: Message = {
+        messages = [...messages, {
           id: crypto.randomUUID(),
           role: 'assistant',
-          content: `✅ **Budget Applied!**\n\n${data.budgets.length} budget(s) have been saved. You can view them in the Budget page.\n\nIs there anything else you'd like to adjust?`,
+          content: `✅ **Budget Applied!**\n\n${data.budgets.length} budget(s) have been saved.`,
           timestamp: new Date()
-        };
-        messages = [...messages, confirmMessage];
+        }];
         pendingActions = null;
-      } else {
-        throw new Error(data.error);
       }
-
-    } catch (err: any) {
-      console.error('Apply budget error:', err);
-      const errorMessage: Message = {
-        id: crypto.randomUUID(),
-        role: 'assistant',
-        content: `❌ Failed to apply budgets: ${err.message}`,
-        timestamp: new Date()
-      };
-      messages = [...messages, errorMessage];
     } finally {
       applyingBudgets = false;
+      tick().then(scrollToBottom);
     }
   }
 
   function cancelBudgets() {
     pendingActions = null;
-    const cancelMessage: Message = {
+    messages = [...messages, {
       id: crypto.randomUUID(),
       role: 'assistant',
-      content: "No problem! Let me know if you want to adjust anything or try a different approach.",
+      content: "No problem! Let me know if you want to adjust anything.",
       timestamp: new Date()
-    };
-    messages = [...messages, cancelMessage];
+    }];
+    tick().then(scrollToBottom);
   }
 
   function useSuggestion(suggestion: string) {
@@ -330,23 +313,12 @@
     const now = new Date();
     const diff = now.getTime() - date.getTime();
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-    if (days === 0) {
-      return 'Today';
-    } else if (days === 1) {
-      return 'Yesterday';
-    } else if (days < 7) {
-      return date.toLocaleDateString('en-US', { weekday: 'short' });
-    } else {
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    }
+    if (days === 0) return 'Today';
+    if (days === 1) return 'Yesterday';
+    if (days < 7) return date.toLocaleDateString('en-US', { weekday: 'short' });
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
-  function formatAmount(amount: number): string {
-    return 'RM ' + amount.toLocaleString();
-  }
-
-  // Delete session functions
   function initiateDeleteSession(sessionId: string) {
     deletingSessionId = sessionId;
     showDeleteSessionModal = true;
@@ -355,32 +327,18 @@
 
   async function confirmDeleteSession() {
     if (!deletingSessionId) return;
-
     deletingSession = true;
-    deleteSessionError = '';
-
     try {
       const response = await fetch(`/api/ai-chat?sessionId=${deletingSessionId}`, {
         method: 'DELETE',
         credentials: 'include'
       });
-
       const data = await response.json();
-
       if (data.success) {
-        // Remove from local list
         chatSessions = chatSessions.filter(s => s.sessionId !== deletingSessionId);
         showDeleteSessionModal = false;
-
-        // If we deleted the currently selected session, start new chat
-        if (selectedSessionId === deletingSessionId) {
-          startNewChat();
-        }
-      } else {
-        throw new Error(data.error);
+        if (selectedSessionId === deletingSessionId) startNewChat();
       }
-    } catch (err: any) {
-      deleteSessionError = err.message || 'Failed to delete chat';
     } finally {
       deletingSession = false;
     }
@@ -389,7 +347,6 @@
   function cancelDeleteSession() {
     showDeleteSessionModal = false;
     deletingSessionId = null;
-    deleteSessionError = '';
   }
 </script>
 
@@ -397,263 +354,276 @@
   <title>MonKrac AI Coach - MoneyKracked</title>
 </svelte:head>
 
-<!-- Page Header -->
-<Header
-  title="MonKrac AI Coach"
-  subtitle="Your expert financial advisor powered by AI"
-/>
+<div class="flex h-[calc(100%+2rem)] lg:h-[calc(100%+4rem)] w-[calc(100%+4rem)] overflow-hidden bg-[var(--color-bg)] -m-4 lg:-m-8 border-black">
+  <!-- Left Sidebar (History) -->
+  <aside class="hidden lg:flex w-80 flex-col border-r-4 border-black bg-[var(--color-surface)]">
+    <div class="p-6 border-b-4 border-black bg-[var(--color-surface-raised)] shadow-md">
+      <h2 class="text-lg font-display text-[var(--color-primary)] mb-4 flex items-center gap-2">
+        <span class="material-symbols-outlined">history</span> HISTORY
+      </h2>
+      <PixelButton variant="primary" onclick={startNewChat} class="w-full text-xs py-3">
+        <span class="material-symbols-outlined text-sm">add</span> NEW CHAT
+      </PixelButton>
+    </div>
 
-<div class="flex gap-4 h-[calc(100vh-220px)] lg:h-[calc(100vh-180px)]">
-  <!-- Chat History Sidebar (Left side like ChatGPT) -->
-  <div class="w-72 flex-shrink-0">
-    <Card padding="none" class="h-full flex flex-col">
-      <!-- Sidebar Header -->
-      <div class="p-4 border-b border-border-dark">
-        <button
-          onclick={startNewChat}
-          class="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-white font-medium hover:bg-primary-hover transition-colors"
-        >
-          <span class="material-symbols-outlined text-lg">add</span>
-          New Chat
-        </button>
-      </div>
-
-      <!-- Sessions List -->
-      <div class="flex-1 overflow-y-auto p-2">
-        {#if isLoadingSessions}
-          <div class="flex items-center justify-center py-8">
-            <div class="inline-block animate-spin rounded-full h-6 w-6 border-2 border-primary border-t-transparent"></div>
-          </div>
-        {:else if chatSessions.length === 0}
-          <div class="text-center py-8 px-4">
-            <span class="material-symbols-outlined text-4xl text-text-muted mb-2">history</span>
-            <p class="text-sm text-text-muted">No chat history yet</p>
-            <p class="text-xs text-text-muted mt-1">Start a conversation to see it here</p>
-          </div>
-        {:else}
-          <div class="space-y-1">
-            {#each chatSessions as session}
-              <div class="group flex items-center gap-1 rounded-lg hover:bg-surface-dark transition-colors {selectedSessionId === session.sessionId ? 'bg-surface-dark' : ''}">
-                <button
-                  onclick={() => loadSessionMessages(session.sessionId)}
-                  class="flex-1 text-left p-3 rounded-lg"
-                >
-                  <div class="flex items-start gap-2">
-                    <span class="material-symbols-outlined text-lg text-text-secondary flex-shrink-0 mt-0.5">
-                      {session.sentiment === 'positive' ? 'sentiment_satisfied' :
-                       session.sentiment === 'stressed' ? 'sentiment_stressed' :
-                       session.sentiment === 'negative' ? 'sentiment_dissatisfied' :
-                       'chat_bubble'}
-                    </span>
-                    <div class="min-w-0 flex-1">
-                      <p class="text-sm font-medium text-white truncate">{session.title}</p>
-                      <p class="text-xs text-text-muted truncate">{session.summary}</p>
-                      <p class="text-xs text-text-muted mt-1">
-                        {formatSessionDate(session.lastMessageAt)}
-                      </p>
-                    </div>
-                  </div>
-                </button>
-                <button
-                  onclick={() => initiateDeleteSession(session.sessionId)}
-                  class="opacity-0 group-hover:opacity-100 p-2 text-text-muted hover:text-danger transition-all flex-shrink-0"
-                  title="Delete chat"
-                >
-                  <span class="material-symbols-outlined text-lg">delete</span>
-                </button>
-              </div>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    </Card>
-  </div>
-
-  <!-- Main Chat Area -->
-  <div class="flex-1 flex flex-col min-w-0">
-    <!-- Chat Messages -->
-    <Card padding="none" class="flex-1 overflow-hidden flex flex-col">
-      <div class="flex-1 overflow-y-auto p-4 space-y-4" data-chat-container>
-      {#each messages as message}
-        <div class="flex {message.role === 'user' ? 'justify-end' : 'justify-start'}">
-          <div class="flex items-start gap-3 max-w-[85%]">
-            {#if message.role === 'assistant'}
-              <div class="flex-shrink-0 h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-primary">
-                <span class="material-symbols-outlined text-lg">smart_toy</span>
-              </div>
-            {/if}
-            
-            <div class="{message.role === 'user' ? 'bg-primary text-white' : 'bg-border-dark text-white'} rounded-2xl px-4 py-3">
-              <p class="whitespace-pre-line text-sm">{@html message.content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p>
-              <p class="text-xs mt-2 {message.role === 'user' ? 'text-white/60' : 'text-text-muted'}">
-                {formatTime(message.timestamp)}
-              </p>
+    <div class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+      {#if isLoadingSessions}
+        <div class="flex flex-col items-center justify-center h-40 gap-3">
+           <div class="animate-spin h-8 w-8 border-4 border-[var(--color-primary)] border-t-transparent"></div>
+           <p class="text-[10px] font-mono text-[var(--color-text-muted)] animate-pulse">DISK LOADING...</p>
+        </div>
+      {:else if chatSessions.length === 0}
+        <div class="text-center py-10 px-4 border-2 border-dashed border-[var(--color-border)] opacity-30">
+          <span class="material-symbols-outlined text-3xl text-[var(--color-text-muted)]">history_toggle_off</span>
+          <p class="text-[10px] uppercase font-mono text-[var(--color-text-muted)] mt-2">No history</p>
+        </div>
+      {:else}
+        {#each chatSessions as session}
+          <div 
+            role="button"
+            tabindex="0"
+            class="w-full text-left group relative bg-[var(--color-bg)] border-2 border-black p-3 hover:translate-x-1 hover:bg-[var(--color-surface-raised)] transition-all cursor-pointer {selectedSessionId === session.sessionId ? 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)] ring-inset shadow-[4px_4px_0px_0px_black]' : 'shadow-[2px_2px_0px_0px_black]'}"
+            onclick={() => loadSessionMessages(session.sessionId)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadSessionMessages(session.sessionId); } }}
+          >
+            <div class="flex justify-between items-start mb-1">
+              <p class="text-xs font-bold text-[var(--color-text)] truncate pr-4">{session.title}</p>
+              <span class="material-symbols-outlined text-xs text-[var(--color-primary)] mt-0.5">
+                  {session.sentiment === 'positive' ? 'sentiment_satisfied' : 'chat_bubble'}
+              </span>
+            </div>
+            <div class="flex justify-between items-center">
+              <span class="text-[9px] font-mono text-[var(--color-text-muted)] uppercase tracking-tighter">{formatSessionDate(session.lastMessageAt)}</span>
+              <span class="text-[8px] font-mono text-[var(--color-primary)] opacity-0 group-hover:opacity-100 transition-opacity">RESUME ⏎</span>
             </div>
             
-            {#if message.role === 'user'}
-              <div class="flex-shrink-0 h-8 w-8 rounded-full bg-surface-dark flex items-center justify-center text-text-secondary">
-                <span class="material-symbols-outlined text-lg">person</span>
-              </div>
-            {/if}
+            <button
+              onclick={(e) => { e.stopPropagation(); initiateDeleteSession(session.sessionId); }}
+              class="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 bg-[var(--color-danger)] text-white w-6 h-6 flex items-center justify-center border-2 border-black shadow-[2px_2px_0px_0px_black] hover:scale-110 transition-all z-10"
+              aria-label="Delete chat session"
+            >
+              <span class="material-symbols-outlined text-xs">close</span>
+            </button>
           </div>
-        </div>
-      {/each}
-      
-      {#if isLoading}
-        <div class="flex justify-start">
-          <div class="flex items-start gap-3">
-            <div class="flex-shrink-0 h-8 w-8 rounded-full bg-primary/20 flex items-center justify-center text-primary">
-              <span class="material-symbols-outlined text-lg">smart_toy</span>
-            </div>
-            <div class="bg-border-dark rounded-2xl px-4 py-3">
-              <div class="flex items-center gap-1">
-                <span class="h-2 w-2 rounded-full bg-text-muted animate-bounce"></span>
-                <span class="h-2 w-2 rounded-full bg-text-muted animate-bounce" style="animation-delay: 0.1s"></span>
-                <span class="h-2 w-2 rounded-full bg-text-muted animate-bounce" style="animation-delay: 0.2s"></span>
-              </div>
-            </div>
-          </div>
-        </div>
+        {/each}
       {/if}
     </div>
     
-    <!-- Pending Budget Actions -->
-    {#if pendingActions && pendingActions.length > 0}
-      <div class="p-4 border-t border-border-dark bg-surface-dark/50">
-        <p class="text-sm font-medium text-white mb-3">📋 Suggested Budget Plan:</p>
-        <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
-          {#each pendingActions as action}
-            <div class="bg-bg-dark rounded-lg p-3 border border-border-dark">
-              <p class="text-xs text-text-muted">{action.categoryName}</p>
-              <p class="font-bold text-white">{formatAmount(action.amount)}</p>
-              <p class="text-xs text-text-muted">/{action.period}</p>
-            </div>
-          {/each}
-        </div>
-        <div class="flex gap-2">
-          <Button onclick={applyBudgets} loading={applyingBudgets}>
-            {#snippet icon()}
-              <span class="material-symbols-outlined text-lg">check</span>
-            {/snippet}
-            Apply Budget
-          </Button>
-          <Button variant="secondary" onclick={cancelBudgets} disabled={applyingBudgets}>
-            Cancel
-          </Button>
-        </div>
-      </div>
-    {/if}
+  </aside>
 
-    <!-- AI Learning Indicator -->
-    {#if learnedInfo}
-      <div class="px-4 py-2 bg-primary/10 border-t border-border-dark">
-        <p class="text-xs text-primary flex items-center gap-1">
-          <span class="material-symbols-outlined text-sm">psychology</span>
-          {learnedInfo}
-        </p>
-      </div>
-    {/if}
-    
-    <!-- Suggestions -->
-    {#if messages.length <= 1}
-      <div class="p-4 border-t border-border-dark">
-        <div class="flex items-center gap-2 mb-2">
-          <p class="text-xs text-text-muted">
-            {isLoadingSuggestions ? 'Loading suggestions...' : '🔥 Trending questions:'}
+  <!-- Main Chat Column -->
+  <div class="flex-1 flex flex-col min-w-0 h-full relative bg-[var(--color-bg)] border-black">
+    <!-- App-like Inline Header -->
+    <header class="h-20 flex items-center justify-between px-6 lg:px-10 border-b-4 border-black bg-[var(--color-surface-raised)] flex-shrink-0 z-20 shadow-lg">
+      <div class="flex items-center gap-4">
+        <button class="lg:hidden h-10 w-10 border-2 border-black bg-[var(--color-surface)] flex items-center justify-center">
+          <span class="material-symbols-outlined">menu</span>
+        </button>
+        <div>
+          <h2 class="text-xl font-display text-[var(--color-primary)]">MONKRAC AI <span class="text-[var(--color-text)]">COACH</span></h2>
+          <p class="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2">
+            <span class="flex h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
+            ACTIVE SESSION: {selectedSessionId ? selectedSessionId.slice(0, 8) : 'NEW'}
           </p>
         </div>
-        <div class="flex flex-wrap gap-2">
-          {#each (isLoadingSuggestions ? defaultSuggestions : suggestions) as suggestion}
-            <button
-              onclick={() => useSuggestion(suggestion)}
-              disabled={isLoadingSuggestions}
-              class="px-3 py-1.5 text-sm rounded-full bg-bg-dark border border-border-dark text-text-secondary hover:text-white hover:border-primary transition-colors disabled:opacity-50"
-            >
-              {suggestion}
-            </button>
-          {/each}
+      </div>
+      
+      <div class="hidden md:flex items-center gap-4">
+        <div class="px-3 py-1.5 border-2 border-black bg-black/20 text-[10px] font-mono text-[var(--color-text-muted)] cursor-help hover:text-[var(--color-text)] transition-colors">
+          CTRL + ENTER TO SEND
         </div>
       </div>
-    {/if}
-    
-    <!-- Input Area -->
-    <div class="p-4 border-t border-border-dark">
-      <form onsubmit={(e) => { e.preventDefault(); sendMessage(); }} class="flex items-center gap-3">
-        <input
-          type="text"
-          placeholder="Ask your AI coach..."
-          bind:value={input}
-          disabled={isLoading}
-          class="flex-1 px-4 py-2.5 rounded-full bg-bg-dark border border-border-dark text-white placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary"
-        />
-        
-        <button
-          type="submit"
-          disabled={!input.trim() || isLoading}
-          class="flex-shrink-0 h-10 w-10 rounded-full bg-primary flex items-center justify-center text-white disabled:opacity-50 disabled:cursor-not-allowed hover:bg-primary-hover transition-colors"
-        >
-          <span class="material-symbols-outlined">send</span>
-        </button>
-      </form>
-    </div>
-  </Card>
-  </div>
-</div>
+    </header>
 
-<!-- Delete Chat Confirmation Modal -->
-{#if showDeleteSessionModal}
-  <div class="fixed inset-0 z-[60] flex items-center justify-center">
-    <!-- Backdrop -->
-    <div
-      class="absolute inset-0 bg-black/60 backdrop-blur-sm"
-      role="button"
-      tabindex="-1"
-      onclick={cancelDeleteSession}
-      onkeydown={(e) => e.key === 'Escape' && cancelDeleteSession()}
-    ></div>
+    <!-- Messages Area -->
+    <div class="flex-1 overflow-y-auto p-4 lg:p-10 space-y-10 scroll-smooth custom-scrollbar" data-chat-container>
+      <div class="w-full space-y-12">
+        {#each messages as message}
+          <div class="flex {message.role === 'user' ? 'justify-end' : 'justify-start'} w-full group">
+            <div class="flex flex-col {message.role === 'user' ? 'items-end' : 'items-start'} w-full">
+              
+              <!-- Avatar-Message Wrapper -->
+              <div class="flex gap-4 {message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-end">
+                <!-- Avatar -->
+                <div class="h-10 w-10 flex-shrink-0 flex items-center justify-center border-4 border-black shadow-[4px_4px_0px_0px_black] {message.role === 'user' ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-surface-raised)]'} mb-2 overflow-hidden">
+                  {#if message.role === 'user' && data.user?.image}
+                    <img src={data.user.image} alt={data.user.name} class="w-full h-full object-cover" />
+                  {:else}
+                    <span class="material-symbols-outlined text-lg {message.role === 'user' ? 'text-black' : 'text-[var(--color-primary)]'}">
+                      {message.role === 'user' ? 'person' : 'smart_toy'}
+                    </span>
+                  {/if}
+                </div>
 
-    <!-- Modal Content -->
-    <div class="relative bg-surface-bg border border-border-dark rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
-      <div class="p-6">
-        <!-- Warning Icon -->
-        <div class="flex items-center justify-center w-12 h-12 rounded-full bg-danger/10 mx-auto mb-4">
-          <span class="material-symbols-outlined text-danger text-2xl">delete</span>
-        </div>
+                <!-- Info (Timestamp/Role) -->
+                <div class="flex flex-col {message.role === 'user' ? 'items-end' : 'items-start'} mb-2 flex-1 min-w-0">
+                  <span class="text-[9px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] mb-1">
+                    {message.role === 'user' ? 'YOU' : 'MONKRAC AI'}
+                  </span>
+                  
+                  <!-- Content Bubble -->
+                  <div class="w-full p-5 border-4 border-black shadow-[8px_8px_0px_0px_black] relative
+                    {message.role === 'user' ? 'bg-[var(--color-primary)] text-black' : 'bg-[var(--color-surface-raised)] text-[var(--color-text)]'}">
+                    
+                    <div class="text-base font-mono leading-relaxed whitespace-pre-wrap assistant-content">
+                      {@html message.content
+                        .replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold underline decoration-2">$1</strong>')
+                        .replace(/• (.*)/g, '<span class="flex items-start gap-2 mt-2"><span class="pixel-bullet mt-2"></span><span>$1</span></span>')}
+                    </div>
+                    
+                    <span class="absolute -bottom-4 {message.role === 'user' ? 'right-0' : 'left-0'} text-[8px] font-mono text-[var(--color-text-muted)] opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap bg-[var(--color-bg)] px-1 border border-black/10">
+                      SENT AT {formatTime(message.timestamp)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        {/each}
 
-        <h3 class="text-lg font-bold text-white text-center mb-2">Delete Chat?</h3>
-
-        <p class="text-sm text-text-muted text-center mb-4">
-          This will permanently delete this chat and all its messages. This action cannot be undone.
-        </p>
-
-        {#if deleteSessionError}
-          <div class="bg-danger/10 border border-danger/30 rounded-lg p-3 mb-4">
-            <p class="text-sm text-danger text-center">{deleteSessionError}</p>
+        {#if isLoading}
+          <div class="flex justify-start w-full animate-in fade-in slide-in-from-left-4">
+            <div class="flex gap-4 items-end">
+              <div class="h-10 w-10 flex-shrink-0 flex items-center justify-center border-4 border-black shadow-[4px_4px_0px_0px_black] bg-[var(--color-surface-raised)] mb-2">
+                <span class="material-symbols-outlined text-lg animate-pulse text-[var(--color-primary)]">smart_toy</span>
+              </div>
+              <div class="flex flex-col items-start mb-2">
+                <span class="text-[9px] font-bold uppercase tracking-widest text-[var(--color-text-muted)] mb-1">MONKRAC IS ANALYSING...</span>
+                <div class="bg-[var(--color-surface-raised)] p-5 border-4 border-black shadow-[8px_8px_0px_0px_black]">
+                  <div class="flex gap-2">
+                    <div class="h-3 w-3 bg-[var(--color-primary)] animate-[bounce_0.6s_infinite]"></div>
+                    <div class="h-3 w-3 bg-[var(--color-primary)] animate-[bounce_0.6s_infinite_0.1s]"></div>
+                    <div class="h-3 w-3 bg-[var(--color-primary)] animate-[bounce_0.6s_infinite_0.2s]"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         {/if}
 
-        <div class="flex gap-3">
-          <button
-            onclick={cancelDeleteSession}
-            disabled={deletingSession}
-            class="flex-1 px-4 py-2.5 rounded-lg bg-bg-dark border border-border-dark text-white font-medium hover:bg-surface-dark transition-colors disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            onclick={confirmDeleteSession}
-            disabled={deletingSession}
-            class="flex-1 px-4 py-2.5 rounded-lg bg-danger text-white font-medium hover:bg-danger-hover transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {#if deletingSession}
-              <div class="inline-block animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
-              <span>Deleting...</span>
-            {:else}
-              <span>Delete</span>
-            {/if}
-          </button>
-        </div>
+        <!-- Budget Plan Ready Notification (Moved Inline to avoid overlap) -->
+        {#if pendingActions && pendingActions.length > 0}
+          <div class="w-full bg-[var(--color-surface-raised)] border-4 border-black shadow-[8px_8px_0px_0px_black] p-6 lg:p-10 animate-in slide-in-from-bottom-8">
+            <div class="flex items-start justify-between mb-6">
+              <div>
+                <h3 class="text-lg font-display text-[var(--color-primary)] uppercase">PROPOSED BUDGET PLAN</h3>
+                <p class="text-[10px] font-mono text-[var(--color-text-muted)] mt-1">Review and apply to your account</p>
+              </div>
+              <span class="material-symbols-outlined text-3xl animate-bounce text-[var(--color-primary)]">account_balance_wallet</span>
+            </div>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-8">
+              {#each pendingActions as action}
+                <div class="bg-black/20 border-2 border-black p-4 hover:translate-y-[-2px] transition-transform">
+                  <p class="text-[8px] text-[var(--color-text-muted)] font-mono uppercase tracking-tighter mb-1">{action.categoryName}</p>
+                  <p class="text-base font-bold text-[var(--color-primary)] font-mono">{formatAmount(action.amount)}</p>
+                </div>
+              {/each}
+            </div>
+            
+            <div class="flex gap-4">
+              <PixelButton variant="primary" onclick={applyBudgets} loading={applyingBudgets} class="flex-1 py-4 text-sm font-bold">
+                APPLY ALL CHANGES
+              </PixelButton>
+              <PixelButton variant="ghost" onclick={cancelBudgets} disabled={applyingBudgets} class="px-8 py-4 text-sm">
+                DISMISS
+              </PixelButton>
+            </div>
+          </div>
+        {/if}
+
+        <!-- Learned Context -->
+        {#if learnedInfo}
+          <div class="inline-flex items-center gap-3 px-4 py-2 bg-[var(--color-primary)] border-4 border-black shadow-[4px_4px_0px_0px_black]">
+            <span class="material-symbols-outlined text-sm text-black">psychology</span>
+            <p class="text-[10px] text-black font-bold uppercase tracking-tight">{learnedInfo}</p>
+          </div>
+        {/if}
+
       </div>
     </div>
+
+    <!-- Persistent Input Area -->
+    <footer class="p-6 lg:p-10 bg-[var(--color-surface)] border-t-4 border-black z-20 flex-shrink-0">
+      <div class="w-full">
+        <form onsubmit={(e) => { e.preventDefault(); sendMessage(); }} class="flex gap-5">
+          <div class="relative flex-1">
+            <span class="absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-primary)] material-symbols-outlined font-bold">
+              chevron_right
+            </span>
+            <input 
+              type="text" 
+              bind:value={input}
+              placeholder="ASK MONKRAC ANYTHING..."
+              disabled={isLoading}
+              class="w-full bg-black border-4 border-black px-12 py-5 text-base font-mono text-[var(--color-text)] shadow-[inset_4px_4px_0px_0px_rgba(0,0,0,0.5)] focus:ring-4 focus:ring-[var(--color-primary)]/20 outline-none placeholder:text-[var(--color-text-muted)]/30"
+            />
+            <div class="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-2 pointer-events-none opacity-30 hidden md:flex">
+              <span class="text-[10px] font-mono border border-white/20 px-1">ENTER</span>
+              <span class="text-[10px] font-mono">⏎</span>
+            </div>
+          </div>
+          
+          <button 
+            type="submit" 
+            disabled={!input.trim() || isLoading}
+            class="h-[72px] w-[72px] bg-[var(--color-primary)] border-4 border-black shadow-[4px_4px_0px_0px_black] flex items-center justify-center hover:translate-y-[-2px] hover:shadow-[6px_6px_0px_0px_black] disabled:bg-gray-700 disabled:opacity-50 disabled:translate-y-0 disabled:shadow-none transition-all group"
+          >
+             <span class="material-symbols-outlined text-black font-bold group-hover:scale-110 transition-transform">send</span>
+          </button>
+        </form>
+        
+        <p class="text-[8px] font-mono text-[var(--color-text-muted)] mt-4 uppercase text-center opacity-50 tracking-[3px]">
+          POWERED BY MONKRAC INTELLIGENCE ENGINE V2.0.4
+        </p>
+      </div>
+    </footer>
   </div>
+</div>
+
+<!-- Modal Background -->
+{#if showDeleteSessionModal}
+    <div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4 animate-in fade-in">
+        <div class="max-w-sm w-full bg-[var(--color-bg)] border-4 border-black shadow-[16px_16px_0px_0px_var(--color-danger)] p-8">
+            <h3 class="text-lg font-display text-[var(--color-danger)] mb-4 uppercase">WIPE CONVERSATION?</h3>
+            <p class="text-sm text-[var(--color-text)] font-mono uppercase mb-8 leading-relaxed">
+                This action is permanent. All context from this chat will be lost to the void.
+            </p>
+            <div class="flex gap-4">
+                <PixelButton onclick={cancelDeleteSession} class="flex-1 py-4 text-xs">CANCEL</PixelButton>
+                <PixelButton variant="danger" onclick={confirmDeleteSession} loading={deletingSession} class="flex-1 py-4 text-xs font-bold">WIPE DATA</PixelButton>
+            </div>
+        </div>
+    </div>
 {/if}
+
+<style>
+    .assistant-content :global(.pixel-bullet) {
+        flex-shrink: 0;
+        width: 10px;
+        height: 10px;
+        background: var(--color-primary);
+        box-shadow: 2px 2px 0px 0px black;
+        margin-top: 4px;
+    }
+    
+    .assistant-content :global(strong) {
+        color: var(--color-primary);
+    }
+    
+    :global([data-theme="light"]) .assistant-content :global(strong) {
+        color: #166534;
+    }
+
+    .custom-scrollbar::-webkit-scrollbar {
+        width: 12px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+        background: var(--color-bg);
+        border-left: 2px solid rgba(0,0,0,0.1);
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: var(--color-surface-raised);
+        border: 2px solid var(--color-border);
+    }
+</style>

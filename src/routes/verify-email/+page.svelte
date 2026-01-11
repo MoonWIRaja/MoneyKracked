@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Card } from '$lib/components/ui';
+  import { PixelButton, IsometricCard } from '$lib/components/ui';
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
 
@@ -8,10 +8,9 @@
 
   onMount(async () => {
     const token = $page.url.searchParams.get('token');
-
     if (!token) {
       status = 'error';
-      message = 'Invalid verification link. Please request a new verification email.';
+      message = 'INVALID_TOKEN_SIGNAL';
       return;
     }
 
@@ -21,80 +20,82 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token })
       });
-
       const data = await response.json();
-
       if (response.ok) {
         status = 'success';
-        message = data.message || 'Your email has been verified successfully!';
+        message = 'IDENTITY_VERIFIED_SUCCESSFULLY';
       } else {
         status = 'error';
-        message = data.error || 'Verification failed. The link may have expired.';
+        message = 'TOKEN_EXPIRED_OR_CORRUPT';
       }
     } catch (error) {
       status = 'error';
-      message = 'An error occurred while verifying your email. Please try again.';
+      message = 'NETWORK_INTERFERENCE';
     }
   });
 
-  function goToLogin() {
-    window.location.href = '/login';
-  }
-
-  function goToDashboard() {
-    window.location.href = '/dashboard';
-  }
+  function goToLogin() { window.location.href = '/login'; }
 </script>
 
 <svelte:head>
   <title>Verify Email - MoneyKracked</title>
 </svelte:head>
 
-<div class="min-h-screen bg-bg-dark flex items-center justify-center p-4">
-  <div class="w-full max-w-md">
-    <!-- Brand Header -->
-    <div class="text-center mb-8">
-      <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/20 text-primary mb-4">
+<div class="min-h-screen bg-[var(--color-bg)] flex flex-col items-center justify-center p-6 relative overflow-hidden">
+  <div class="absolute inset-0 opacity-10 pointer-events-none" 
+    style="background-image: radial-gradient(var(--color-primary) 1px, transparent 1px); background-size: 24px 24px;">
+  </div>
+
+  <div class="w-full max-w-sm relative z-10">
+    <div class="text-center mb-10">
+      <div class="inline-flex items-center justify-center w-20 h-20 border-4 border-black bg-[var(--color-primary)] shadow-[4px_4px_0px_0px_var(--color-shadow)] mb-4">
         {#if status === 'loading'}
-          <span class="material-symbols-outlined text-3xl animate-spin">refresh</span>
+          <span class="material-symbols-outlined text-4xl text-black animate-spin">sync</span>
         {:else if status === 'success'}
-          <span class="material-symbols-outlined text-3xl">check_circle</span>
+          <span class="material-symbols-outlined text-4xl text-black">verified</span>
         {:else}
-          <span class="material-symbols-outlined text-3xl">error</span>
+          <span class="material-symbols-outlined text-4xl text-black">report_gmailerrorred</span>
         {/if}
       </div>
-      <h1 class="text-2xl font-bold text-white">MoneyKracked</h1>
+      <h1 class="text-2xl font-display text-[var(--color-primary)] tracking-tighter uppercase">MoneyKracked</h1>
+      <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest mt-1">IDENTITY_VALIDATION_LAYER</p>
     </div>
 
-    <Card>
+    <IsometricCard title={status === 'loading' ? 'SCANNING' : status === 'success' ? 'VALIDATED' : 'ERROR'}>
       {#if status === 'loading'}
-        <div class="text-center py-8">
-          <h2 class="text-xl font-bold text-white mb-2">Verifying Your Email</h2>
-          <p class="text-text-muted">Please wait while we verify your email address...</p>
+        <div class="text-center py-8 space-y-4">
+          <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase">AUTORUNNING_VERIFICATION_SEQUENCE...</p>
+          <div class="flex justify-center gap-1">
+             <div class="h-3 w-3 bg-[var(--color-primary)] animate-bounce"></div>
+             <div class="h-3 w-3 bg-[var(--color-primary)] animate-bounce delay-75"></div>
+             <div class="h-3 w-3 bg-[var(--color-primary)] animate-bounce delay-150"></div>
+          </div>
         </div>
       {:else if status === 'success'}
-        <div class="text-center py-8">
-          <h2 class="text-xl font-bold text-white mb-2">Email Verified!</h2>
-          <p class="text-text-muted mb-6">{message}</p>
-          <div class="bg-success/10 border border-success/20 rounded-lg p-4 mb-6">
-            <p class="text-success text-sm">You can now sign in to your account.</p>
+        <div class="text-center py-6 space-y-6">
+          <p class="text-[10px] font-mono text-[var(--color-text)] uppercase">{message}</p>
+          <div class="p-4 bg-[var(--color-primary)]/[0.1] border-4 border-black text-left">
+             <p class="text-[9px] font-mono uppercase text-[var(--color-primary)]">PROTOCOL_COMPLETED_MEMBER_ACCESS_GRANTED.</p>
           </div>
-          <Button class="w-full" onclick={goToLogin}>Go to Login</Button>
+          <PixelButton variant="primary" class="w-full text-xs" onclick={goToLogin}>
+            SYSTEM_LOGIN
+          </PixelButton>
         </div>
       {:else}
-        <div class="text-center py-8">
-          <h2 class="text-xl font-bold text-white mb-2">Verification Failed</h2>
-          <p class="text-text-muted mb-6">{message}</p>
-          <div class="bg-danger/10 border border-danger/20 rounded-lg p-4 mb-6">
-            <p class="text-danger text-sm">
-              The verification link may have expired or is invalid. Please request a new verification email.
-            </p>
+        <div class="text-center py-6 space-y-6">
+          <p class="text-[10px] font-mono text-[var(--color-danger)] uppercase">{message}</p>
+          <div class="p-4 bg-[var(--color-danger)]/[0.1] border-4 border-black text-left">
+             <p class="text-[9px] font-mono uppercase text-[var(--color-danger)]">VALIDATION_LINK_REJECTED_OR_LINK_TIMEOUT.</p>
           </div>
-          <div class="space-y-3">
-            <Button class="w-full" variant="secondary" onclick={goToLogin}>Back to Login</Button>
-          </div>
+          <PixelButton variant="ghost" class="w-full text-xs" onclick={goToLogin}>
+            RETURN_TO_BASE
+          </PixelButton>
         </div>
       {/if}
-    </Card>
+    </IsometricCard>
+
+    <p class="text-center mt-8 text-[8px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest opacity-50">
+      SECURITY_SUBSYSTEM_ONLINE // NO_DUMMY_DATA
+    </p>
   </div>
 </div>

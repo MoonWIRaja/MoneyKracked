@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { Header } from '$lib/components/layout';
   import { KPICard, SpendingChart, RecentExpenses } from '$lib/components/dashboard';
+  import { IsometricCard, PixelButton } from '$lib/components/ui';
+  import { goto, invalidateAll } from '$app/navigation';
   import { onMount } from 'svelte';
   import { type Currency } from '$lib/utils/currency';
+  import { subscribeToCurrencyLazy, convertAmountMYR } from '$lib/stores/currency-store';
 
   interface ServerBudget {
     id: string;
@@ -25,12 +27,12 @@
   }
 
   interface PageData {
-    rates: Record<string, Record<string, number>>;
     currency: string;
     month: number;
     year: number;
     budgets: ServerBudget[];
     transactions: ServerTransaction[];
+    rates?: Record<string, Record<string, number>>;
   }
 
   interface Props {
@@ -75,42 +77,228 @@
     return formatters[locale as keyof typeof formatters]?.format(amount) || amount.toLocaleString();
   }
 
-  interface Budget {
+  // ============================================================
+  // NON-REACTIVE CURRENCY STATE - avoids reactive cycles
+  // Only the computed output values are reactive
+  // ============================================================
+  let selectedCurrency: Currency = 'MYR';
+  let exchangeRates: Record<string, Record<string, number>> = {};
+
+  // UI state
+  let loading = $state(false);
+
+  // Reactive state for computed data - these are the ONLY reactive states
+  let budgets = $state<any[]>([]);
+  let spendingData = $state<any[]>([]);
+  let recentExpenses = $state<any[]>([]);
+  let formattedTotalDeposits = $state('-');
+  let formattedTotalSpent = $state('-');
+  let formattedRemaining = $state('-');
+  let formattedTotalWithIncome = $state('-');
+  let remainingBudgetValue = $state(0);
+  let remainingBudgetFormatted = $state('-');
+  let remainingBudgetPercentage = $state(100);
+  let overspentCategoriesList = $state<any[]>([]);
+  let overspentCategoriesCount = $state(0);
+  let currentCurrencySymbol = $state('RM');
+  let currentCurrencyLocale = $state('en-MY');
+
+  // Pre-computed overspent items for modal (with converted values)
+  let overspentItemsForModal = $state<Array<{
     id: string;
     categoryName: string;
     categoryIcon: string;
     categoryColor: string;
     limitAmount: number;
     spent: number;
+    overAmount: number;
+    currencySymbol: string;
+    currencyLocale: string;
+  }>>([]);
+
+  // ============================================================
+  // Guard condition to prevent redundant updates
+  // ============================================================
+  let lastProcessedCurrency = '';
+  let lastProcessedRatesHash = '';
+
+  function getRatesHash(rates: Record<string, Record<string, number>>): string {
+    return JSON.stringify(rates);
   }
 
-  // Initialize with server-loaded data (instant display!)
-  // Use destructuring to capture values at component creation
-  const initialData = data;
-  let selectedCurrency = $state<Currency>((initialData?.currency as Currency) || 'MYR');
-  let exchangeRates = $state<Record<string, Record<string, number>>>(initialData?.rates || {});
-  let budgets = $state<Budget[]>(initialData?.budgets || []);
-  let loading = $state(false); // No loading needed - data is already here!
+  // ============================================================
+  // Process dashboard data - called manually when dependencies change
+  // Uses guard condition to prevent redundant processing
+  // ============================================================
+  function processDashboardData() {
+    // GUARD: Skip if currency and rates haven't changed
+    const currencyKey = selectedCurrency;
+    const ratesHash = getRatesHash(exchangeRates);
+    if (lastProcessedCurrency === currencyKey && lastProcessedRatesHash === ratesHash) {
+      return; // Already processed with these values
+    }
+    lastProcessedCurrency = currencyKey;
+    lastProcessedRatesHash = ratesHash;
 
-  // Spending chart data
-  let spendingData: Array<{ name: string; value: number; percentage: number; color: string; formattedValue: string }> = $state([]);
-  let remainingBudgetData = $state<{ value: number; formattedValue: string; percentage: number } | undefined>(undefined);
-  let totalBudgetWithIncome = $state(0);
-  let totalBudgetKPI = $state(0);
-  let remainingBudgetKPI = $state(0);
-  let recentExpenses: Array<{
-    id: string;
-    payee: string;
-    amount: number;
-    date: string;
-    icon: string;
-    iconColor: string;
-    iconBg: string;
-  }> = $state([]);
+    const txs = data?.transactions || [];
+    const budgetsData = data?.budgets || [];
+    const curr = currencies[selectedCurrency] || currencies['MYR'];
 
-  // Computed values from budgets (for overspent categories only)
-  const overspentCategories = $derived(budgets.filter(b => b.spent > b.limitAmount).length);
-  const overspentCategoriesList = $derived(budgets.filter(b => b.spent > b.limitAmount));
+    // 1. Process Income & Spent by Category (Base MYR)
+    let incomeTotalMYR = 0;
+    const spentByCategoryMYR: Record<string, number> = {};
+
+    for (const tx of txs) {
+      if (tx.type === 'income') {
+        incomeTotalMYR += tx.amount;
+      } else if (tx.type === 'expense') {
+        const catName = tx.categoryName || 'Other';
+        spentByCategoryMYR[catName] = (spentByCategoryMYR[catName] || 0) + tx.amount;
+      }
+    }
+
+    // 2. Budgets with spent amounts (Base MYR)
+    const baseBudgets = budgetsData.map((b: ServerBudget) => ({
+      ...b,
+      spent: spentByCategoryMYR[b.categoryName] || 0
+    }));
+
+    // 3. Converted Values for UI
+    const convert = (val: number) => convertAmountMYR(val, selectedCurrency, exchangeRates);
+    const fmt = (val: number) => curr.symbol + ' ' + formatNumber(val, curr.locale);
+
+    const converted = baseBudgets.map(b => ({
+      ...b,
+      limitAmount: convert(b.limitAmount),
+      spent: convert(b.spent)
+    }));
+
+    const budgetLimitsConverted = converted.reduce((sum, b) => sum + b.limitAmount, 0);
+    const incomeTotalConverted = convert(incomeTotalMYR);
+    const totalAvailableConverted = budgetLimitsConverted + incomeTotalConverted;
+    const totalSpentConverted = Object.values(spentByCategoryMYR).reduce((sum, amt) => sum + convert(amt), 0);
+    const remainingConverted = totalAvailableConverted - totalSpentConverted;
+
+    // 4. Chart Data
+    const budgetCategoryNames = new Set(budgetsData.map((b: ServerBudget) => b.categoryName));
+    const spendingDataMap: Array<{ name: string; value: number; percentage: number; color: string; formattedValue: string }> = [];
+
+    for (const b of converted) {
+      if (b.categoryName === 'Income') continue;
+      spendingDataMap.push({
+        name: b.categoryName,
+        value: b.spent,
+        percentage: totalAvailableConverted > 0 ? (b.spent / totalAvailableConverted) * 100 : 0,
+        color: b.categoryColor,
+        formattedValue: fmt(b.spent)
+      });
+    }
+
+    if (!budgetCategoryNames.has('Other')) {
+      const otherSpentConverted = convert(spentByCategoryMYR['Other'] || 0);
+      spendingDataMap.push({
+        name: 'Other',
+        value: otherSpentConverted,
+        percentage: totalAvailableConverted > 0 ? (otherSpentConverted / totalAvailableConverted) * 100 : 0,
+        color: '#6b7280',
+        formattedValue: fmt(otherSpentConverted)
+      });
+    }
+    spendingDataMap.sort((a, b) => b.value - a.value);
+
+    // 5. Recent Expenses
+    const budgetMap = new Map(converted.map(b => [b.categoryName, b]));
+    const recent = txs.slice(0, 5).map(tx => {
+      const category = budgetMap.get(tx.categoryName);
+      const color = tx.categoryColor || category?.categoryColor || '#6b7280';
+      const colorClasses = colorClassMap[color.toLowerCase()] || colorClassMap['#6b7280'];
+      return {
+        id: tx.id,
+        payee: tx.payee,
+        amount: convert(tx.amount),
+        date: tx.date,
+        icon: tx.categoryIcon || category?.categoryIcon || 'receipt',
+        iconColor: colorClasses.text,
+        iconBg: colorClasses.bg
+      };
+    });
+
+    const overspentList = baseBudgets.filter(b => b.spent > b.limitAmount);
+
+    // Pre-compute overspent items for modal (with converted values)
+    const modalItems = overspentList.map(b => ({
+      id: b.id,
+      categoryName: b.categoryName,
+      categoryIcon: b.categoryIcon,
+      categoryColor: b.categoryColor,
+      limitAmount: convert(b.limitAmount),
+      spent: convert(b.spent),
+      overAmount: convert(b.spent) - convert(b.limitAmount),
+      currencySymbol: curr.symbol,
+      currencyLocale: curr.locale
+    }));
+
+    // Update all reactive state (batched)
+    budgets = baseBudgets;
+    spendingData = spendingDataMap;
+    recentExpenses = recent;
+    formattedTotalDeposits = totalAvailableConverted === 0 ? '-' : fmt(totalAvailableConverted);
+    formattedTotalSpent = totalSpentConverted === 0 ? '-' : fmt(totalSpentConverted);
+    formattedRemaining = (remainingConverted === 0 && totalAvailableConverted === 0) ? '-' : fmt(remainingConverted);
+    formattedTotalWithIncome = totalAvailableConverted === 0 ? '-' : fmt(totalAvailableConverted);
+    remainingBudgetValue = remainingConverted;
+    remainingBudgetFormatted = fmt(remainingConverted);
+    remainingBudgetPercentage = totalAvailableConverted > 0 ? (remainingConverted / totalAvailableConverted) * 100 : 100;
+    overspentCategoriesList = overspentList;
+    overspentCategoriesCount = overspentList.length;
+    overspentItemsForModal = modalItems;
+    currentCurrencySymbol = curr.symbol;
+    currentCurrencyLocale = curr.locale;
+  }
+
+  // ============================================================
+  // Initialize data on mount
+  // ============================================================
+  onMount(() => {
+    // Check for auth_token in sessionStorage (from OAuth callback)
+    const storedToken = sessionStorage.getItem('auth_token');
+    if (storedToken) {
+      console.log('[Dashboard] Found auth_token, syncing session...');
+      fetch('/api/auth/set-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ token: storedToken })
+      })
+      .then(res => res.json())
+      .then(() => {
+        sessionStorage.removeItem('auth_token');
+        window.location.reload();
+      })
+      .catch(console.error);
+      return;
+    }
+
+    // Initialize currency from props (non-reactive assignment)
+    if (data.currency) selectedCurrency = data.currency as Currency;
+    if (data.rates) exchangeRates = data.rates;
+
+    // Process initial data
+    processDashboardData();
+
+    // Subscribe to currency changes using lazy subscription (no immediate callback)
+    const unsubscribe = subscribeToCurrencyLazy((currency, rates) => {
+      // Non-reactive assignment - doesn't trigger reactive effects
+      selectedCurrency = currency;
+      exchangeRates = rates;
+      // Manually trigger data processing
+      processDashboardData();
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  });
 
   // Overspent Modal State
   let showOverspentModal = $state(false);
@@ -120,7 +308,7 @@
 
   // Open overspent modal and fetch AI advice
   async function openOverspentModal() {
-    if (overspentCategories === 0) return;
+    if (overspentCategoriesCount === 0) return;
 
     showOverspentModal = true;
     overspentLoading = true;
@@ -128,13 +316,17 @@
     overspentAdvice = '';
 
     try {
-      const curr = currencies[selectedCurrency];
-      const overspentDetails = overspentCategoriesList.map(b => ({
-        category: b.categoryName,
-        budget: curr.symbol + ' ' + formatNumber(b.limitAmount, curr.locale),
-        spent: curr.symbol + ' ' + formatNumber(b.spent, curr.locale),
-        over: curr.symbol + ' ' + formatNumber(b.spent - b.limitAmount, curr.locale)
-      }));
+      const curr = currencies[selectedCurrency] || currencies['MYR'];
+      const overspentDetails = overspentCategoriesList.map(b => {
+        const convLimit = convertAmountMYR(b.limitAmount, selectedCurrency, exchangeRates);
+        const convSpent = convertAmountMYR(b.spent, selectedCurrency, exchangeRates);
+        return {
+          category: b.categoryName,
+          budget: curr.symbol + ' ' + formatNumber(convLimit, curr.locale),
+          spent: curr.symbol + ' ' + formatNumber(convSpent, curr.locale),
+          over: curr.symbol + ' ' + formatNumber(convSpent - convLimit, curr.locale)
+        };
+      });
 
       const response = await fetch('/api/ai-advice', {
         method: 'POST',
@@ -160,153 +352,6 @@
     }
   }
 
-  // Convert amount from MYR to selected currency
-  function convertAmount(amountMYR: number): number {
-    if (selectedCurrency === 'MYR') return amountMYR;
-    const rate = exchangeRates.MYR?.[selectedCurrency];
-    if (rate) {
-      return Math.round(amountMYR * rate * 100) / 100;
-    }
-    // Fallback default rates
-    const defaultRates: Record<string, number> = { SGD: 0.31, USD: 0.22 };
-    const fallbackRate = defaultRates[selectedCurrency];
-    if (fallbackRate) {
-      return Math.round(amountMYR * fallbackRate * 100) / 100;
-    }
-    return amountMYR;
-  }
-
-  // Process server data immediately (no API calls needed!)
-  function processServerData() {
-    const txs = initialData?.transactions || [];
-    const budgetsData = initialData?.budgets || [];
-
-    // Calculate income total and spending by category
-    let incomeTotalMYR = 0;
-    const spentByCategoryMYR: Record<string, number> = {};
-
-    for (const tx of txs) {
-      if (tx.type === 'income') {
-        incomeTotalMYR += tx.amount;
-      } else if (tx.type === 'expense') {
-        const catName = tx.categoryName || 'Other';
-        spentByCategoryMYR[catName] = (spentByCategoryMYR[catName] || 0) + tx.amount;
-      }
-    }
-
-    // Update budgets with spent amounts
-    budgets = budgetsData.map((b: ServerBudget) => ({
-      ...b,
-      spent: convertAmount(spentByCategoryMYR[b.categoryName] || 0)
-    }));
-
-    // Convert budgets to selected currency for display
-    const budgetsConverted = budgetsData.map((b: ServerBudget) => ({
-      ...b,
-      limitAmount: convertAmount(b.limitAmount),
-      spent: convertAmount(spentByCategoryMYR[b.categoryName] || 0)
-    }));
-
-    // Total budget = budget limits + income (all converted)
-    const budgetLimitsConverted = budgetsConverted.reduce((sum: number, b: any) => sum + b.limitAmount, 0);
-    const incomeTotalConverted = convertAmount(incomeTotalMYR);
-    const calculatedTotalWithIncome = budgetLimitsConverted + incomeTotalConverted;
-
-    // Include all spending from spentByCategory
-    const totalSpentAmountConverted = Object.values(spentByCategoryMYR).reduce((sum: number, amount: number) => sum + convertAmount(amount), 0);
-    const totalRemainingAmount = calculatedTotalWithIncome - totalSpentAmountConverted;
-
-    // Build chart data
-    const curr = currencies[selectedCurrency];
-    spendingData = [];
-
-    const budgetCategoryNames = new Set(budgetsConverted.map((b: Budget) => b.categoryName));
-    const fmt = (amount: number) => curr.symbol + ' ' + formatNumber(amount, curr.locale);
-
-    // Add all budgeted categories
-    for (const b of budgets) {
-      if (b.categoryName === 'Income') continue;
-      const spentConverted = convertAmount(spentByCategoryMYR[b.categoryName] || 0);
-      spendingData.push({
-        name: b.categoryName,
-        value: spentConverted,
-        percentage: calculatedTotalWithIncome > 0 ? (spentConverted / calculatedTotalWithIncome) * 100 : 0,
-        color: b.categoryColor,
-        formattedValue: fmt(spentConverted)
-      });
-    }
-
-    // Add 'Other' category if not in budgets
-    const otherSpentMYR = spentByCategoryMYR['Other'] || 0;
-    const otherSpentConverted = convertAmount(otherSpentMYR);
-    if (!budgetCategoryNames.has('Other')) {
-      spendingData.push({
-        name: 'Other',
-        value: otherSpentConverted,
-        percentage: calculatedTotalWithIncome > 0 ? (otherSpentConverted / calculatedTotalWithIncome) * 100 : 0,
-        color: '#6b7280',
-        formattedValue: fmt(otherSpentConverted)
-      });
-    }
-
-    // Add 'Income' category
-    if (!budgetCategoryNames.has('Income')) {
-      spendingData.push({
-        name: 'Income',
-        value: incomeTotalConverted,
-        percentage: calculatedTotalWithIncome > 0 ? (incomeTotalConverted / calculatedTotalWithIncome) * 100 : 0,
-        color: '#10b981',
-        formattedValue: fmt(incomeTotalConverted)
-      });
-    }
-
-    // Populate recent expenses (top 5)
-    const budgetMap = new Map<string, Budget>(budgetsConverted.map((b: Budget) => [b.categoryName, b]));
-
-    recentExpenses = txs
-      .slice(0, 5)
-      .map((tx: ServerTransaction) => {
-        const category = budgetMap.get(tx.categoryName);
-        const icon = tx.categoryIcon || category?.categoryIcon || 'receipt';
-        const color = tx.categoryColor || category?.categoryColor || '#6b7280';
-        const colorClasses = colorClassMap[color.toLowerCase()] || colorClassMap['#6b7280'];
-
-        return {
-          id: tx.id,
-          payee: tx.payee || 'No description',
-          amount: convertAmount(tx.amount),
-          date: tx.date,
-          icon: icon,
-          iconColor: colorClasses.text,
-          iconBg: colorClasses.bg
-        };
-      });
-
-    // Sort by value
-    spendingData.sort((a, b) => {
-      if (a.value === 0 && b.value === 0) return a.name.localeCompare(b.name);
-      if (a.value === 0) return 1;
-      if (b.value === 0) return -1;
-      return b.value - a.value;
-    });
-
-    // Set KPI values
-    totalBudgetWithIncome = calculatedTotalWithIncome;
-    totalBudgetKPI = calculatedTotalWithIncome;
-    remainingBudgetKPI = totalRemainingAmount;
-
-    remainingBudgetData = {
-      value: totalRemainingAmount,
-      formattedValue: fmt(totalRemainingAmount),
-      percentage: calculatedTotalWithIncome > 0 ? (totalRemainingAmount / calculatedTotalWithIncome) * 100 : 100
-    };
-  }
-
-  // Process data immediately on mount (no API calls!)
-  onMount(() => {
-    processServerData();
-  });
-
   // Handle color change from chart
   async function handleColorChange(categoryName: string, color: string) {
     try {
@@ -320,19 +365,11 @@
       const result = await response.json();
 
       if (result.success) {
-        spendingData = spendingData.map(item =>
-          item.name === categoryName ? { ...item, color } : item
-        );
+        await invalidateAll();
       }
     } catch (err) {
       console.error('Failed to update color:', err);
     }
-  }
-
-  function formatAmount(amount: number): string {
-    if (amount === 0 && totalBudgetKPI === 0) return '-';
-    const curr = currencies[selectedCurrency];
-    return curr.symbol + ' ' + formatNumber(amount, curr.locale);
   }
 </script>
 
@@ -340,57 +377,99 @@
   <title>Dashboard - MoneyKracked</title>
 </svelte:head>
 
-<!-- Page Header -->
-<Header
-  title="Dashboard"
-  subtitle="Welcome back! Here's your financial overview."
-/>
+<div class="flex h-[calc(100%+2rem)] lg:h-[calc(100%+4rem)] w-[calc(100%+4rem)] overflow-hidden bg-[var(--color-bg)] -m-4 lg:-m-8 border-black">
+  <!-- Main Dashboard Column -->
+  <div class="flex-1 flex flex-col min-w-0 h-full relative bg-[var(--color-bg)]">
+    <!-- App-like Inline Header -->
+    <header class="h-20 flex items-center justify-between px-6 lg:px-10 border-b-4 border-black bg-[var(--color-surface-raised)] flex-shrink-0 z-20 shadow-lg">
+      <div class="flex items-center gap-4">
+        <div>
+          <h2 class="text-xl font-display text-[var(--color-primary)]">DAILY <span class="text-[var(--color-text)]">DASHBOARD</span></h2>
+          <p class="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
+            <span class="flex h-2 w-2 rounded-full bg-[var(--color-primary)] animate-pulse"></span>
+            Financial Overview • {data.month}/{data.year}
+          </p>
+        </div>
+      </div>
+      
+      <div class="flex items-center gap-4">
+        <PixelButton variant="primary" onclick={() => goto('/transactions?add=true')} class="hidden md:flex text-[10px] py-2 px-4 h-10">
+          <span class="material-symbols-outlined text-sm">add</span> ADD TRANSACTION
+        </PixelButton>
+        <button class="h-10 w-10 border-2 border-black bg-[var(--color-surface)] flex items-center justify-center hover:bg-[var(--color-surface-raised)] transition-colors" onclick={() => invalidateAll()}>
+          <span class="material-symbols-outlined">refresh</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Scrollable Content Area -->
+    <div class="flex-1 overflow-y-auto p-6 lg:p-10 space-y-10 scroll-smooth custom-scrollbar">
 
 <!-- KPI Cards -->
-<section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+<section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
   <KPICard
-    title="Total Budget (This Month)"
-    value={formatAmount(totalBudgetKPI)}
-    icon="savings"
+    title="Total Budget"
+    value={formattedTotalDeposits}
+    icon="payments"
     iconColor="blue"
+    valueColor="primary"
+    clickable={true}
+    onclick={() => goto('/budget')}
   />
 
   <KPICard
-    title="Remaining Budget"
-    value={formatAmount(remainingBudgetKPI)}
-    valueColor={remainingBudgetKPI >= 0 ? 'primary' : 'danger'}
-    icon="account_balance"
-    iconColor={remainingBudgetKPI >= 0 ? 'green' : 'red'}
+    title="Total Spent"
+    value={formattedTotalSpent}
+    icon="receipt_long"
+    iconColor="orange"
+    clickable={true}
+    onclick={() => goto('/transactions')}
   />
 
   <KPICard
-    title="Overspent Categories"
-    value={overspentCategories > 0 ? `${overspentCategories} Categories` : 'None'}
+    title="Remaining"
+    value={formattedRemaining}
+    valueColor={remainingBudgetValue >= 0 ? 'primary' : 'danger'}
+    icon="account_balance_wallet"
+    iconColor={remainingBudgetValue >= 0 ? 'green' : 'red'}
+    clickable={true}
+    onclick={() => goto('/budget')}
+  />
+
+  <KPICard
+    title="Warnings"
+    value={overspentCategoriesCount > 0 ? `${overspentCategoriesCount} Categories` : 'Clear'}
     icon="warning"
-    iconColor={overspentCategories > 0 ? 'red' : 'green'}
-    clickable={overspentCategories > 0}
+    iconColor={overspentCategoriesCount > 0 ? 'red' : 'green'}
+    clickable={overspentCategoriesCount > 0}
     onclick={openOverspentModal}
   />
 </section>
 
 <!-- Overspent Advice Modal -->
 {#if showOverspentModal}
-  <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onclick={() => showOverspentModal = false}>
-    <div class="bg-surface-dark rounded-2xl max-w-lg w-full max-h-[80vh] overflow-hidden border border-border-dark shadow-2xl" onclick={(e) => e.stopPropagation()}>
+  <div
+    class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm"
+    onclick={() => showOverspentModal = false}
+    onkeydown={(e) => e.key === 'Escape' && (showOverspentModal = false)}
+    role="button"
+    tabindex="-1"
+  >
+    <!-- Pixel Art Modal -->
+    <div class="bg-[var(--color-surface)] rounded-none w-full max-w-lg overflow-hidden border-4 border-[var(--color-border)] shadow-[var(--shadow-primary)]" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="0">
       <!-- Header -->
-      <div class="flex items-center justify-between p-6 border-b border-border-dark">
+      <div class="flex items-center justify-between p-4 border-b-4 border-[var(--color-border)] bg-[var(--color-surface-raised)]">
         <div class="flex items-center gap-3">
-          <span class="material-symbols-outlined text-3xl text-danger">warning</span>
+          <span class="material-symbols-outlined text-3xl text-[var(--color-danger)]">warning</span>
           <div>
-            <h3 class="text-xl font-bold text-white">Overspent Categories</h3>
-            <p class="text-sm text-text-muted">AI-powered insights & recommendations</p>
+            <h3 class="text-lg font-display uppercase tracking-wider text-[var(--color-text)]">Overspent!</h3>
           </div>
         </div>
         <button
           onclick={() => showOverspentModal = false}
-          class="text-text-muted hover:text-white transition-colors p-1"
+          class="text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors p-1"
         >
-          <span class="material-symbols-outlined">close</span>
+          <span class="material-symbols-outlined font-bold">close</span>
         </button>
       </div>
 
@@ -398,11 +477,11 @@
       <div class="p-6 overflow-y-auto max-h-[60vh]">
         {#if overspentLoading}
           <div class="flex flex-col items-center justify-center py-8">
-            <div class="inline-block animate-spin rounded-full h-10 w-10 border-3 border-primary border-t-transparent mb-4"></div>
-            <p class="text-text-muted">Analyzing your spending...</p>
+            <div class="inline-block animate-spin h-10 w-10 border-4 border-[var(--color-primary)] border-t-transparent mb-4"></div>
+            <p class="text-[var(--color-text-muted)] font-mono">Scanning Finances...</p>
           </div>
         {:else if overspentError}
-          <div class="bg-danger/10 border border-danger/30 rounded-xl p-4 text-danger">
+          <div class="bg-danger/10 border-2 border-[var(--color-danger)] p-4 text-[var(--color-danger)] font-mono">
             <p class="flex items-center gap-2">
               <span class="material-symbols-outlined text-sm">error</span>
               {overspentError}
@@ -410,23 +489,20 @@
           </div>
         {:else}
           <!-- Overspent List -->
-          <div class="space-y-3 mb-6">
-            {#each overspentCategoriesList as item}
-              <div class="bg-surface-light/5 rounded-lg p-4 border border-border-dark">
+          <div class="space-y-4 mb-6">
+            {#each overspentItemsForModal as item}
+              <div class="bg-[var(--color-bg)] rounded-none p-4 border-2 border-[var(--color-border)] shadow-inner">
                 <div class="flex items-center justify-between mb-2">
                   <div class="flex items-center gap-2">
                     <span class="material-symbols-outlined" style="color: {item.categoryColor}">{item.categoryIcon}</span>
-                    <span class="font-semibold text-white">{item.categoryName}</span>
+                    <span class="font-bold text-[var(--color-text)] font-ui">{item.categoryName}</span>
                   </div>
-                  <span class="text-danger font-bold">+{currencies[selectedCurrency].symbol} {formatNumber(item.spent - item.limitAmount, currencies[selectedCurrency].locale)}</span>
+                  <span class="text-[var(--color-danger)] font-bold font-mono">+{item.currencySymbol} {formatNumber(item.overAmount, item.currencyLocale)}</span>
                 </div>
-                <div class="flex justify-between text-sm text-text-muted">
-                  <span>Budget: {currencies[selectedCurrency].symbol} {formatNumber(item.limitAmount, currencies[selectedCurrency].locale)}</span>
-                  <span>Spent: {currencies[selectedCurrency].symbol} {formatNumber(item.spent, currencies[selectedCurrency].locale)}</span>
-                </div>
-                <div class="mt-2 h-2 bg-surface-light/10 rounded-full overflow-hidden">
+                <!-- Progress Bar -->
+                <div class="mt-2 h-4 bg-[var(--color-surface)] border-2 border-[var(--color-border)] relative">
                   <div
-                    class="h-full bg-danger rounded-full transition-all"
+                    class="h-full bg-[var(--color-danger)] absolute top-0 left-0"
                     style="width: {Math.min((item.spent / item.limitAmount) * 100, 100)}%"
                   ></div>
                 </div>
@@ -436,12 +512,12 @@
 
           <!-- AI Advice -->
           {#if overspentAdvice}
-            <div class="bg-primary/10 border border-primary/30 rounded-xl p-4">
+            <div class="bg-[var(--color-primary)]/10 border-2 border-dashed border-[var(--color-primary)] p-4">
               <div class="flex items-center gap-2 mb-3">
-                <span class="material-symbols-outlined text-primary">psychology</span>
-                <h4 class="font-semibold text-white">AI Recommendations</h4>
+                <span class="material-symbols-outlined text-[var(--color-primary)]">psychology</span>
+                <h4 class="font-bold text-[var(--color-text)] font-display text-sm uppercase">AI Analysis</h4>
               </div>
-              <div class="text-text-secondary whitespace-pre-wrap text-sm leading-relaxed">
+              <div class="text-[var(--color-text)] whitespace-pre-wrap text-sm leading-relaxed font-mono">
                 {overspentAdvice}
               </div>
             </div>
@@ -450,21 +526,23 @@
       </div>
 
       <!-- Footer -->
-      <div class="flex justify-end gap-3 p-4 border-t border-border-dark bg-surface-light/5">
-        <button
-          onclick={() => showOverspentModal = false}
-          class="px-4 py-2 rounded-lg text-text-secondary hover:text-white hover:bg-surface-light/10 transition-colors"
-        >
-          Close
-        </button>
-        {#if overspentCategories > 0 && !overspentLoading}
-          <a
-            href="/coach"
-            class="px-4 py-2 rounded-lg bg-primary text-white font-medium hover:bg-primary-hover transition-colors flex items-center gap-2"
+      <div class="flex justify-end gap-3 p-4 border-t-4 border-[var(--color-border)] bg-[var(--color-surface-raised)]">
+        <PixelButton variant="ghost" onclick={() => showOverspentModal = false}>
+            Close
+        </PixelButton>
+
+        {#if overspentCategoriesCount > 0 && !overspentLoading}
+          <PixelButton
+            variant="primary"
+            onclick={() => {
+              // Use pre-computed overspent items (no currency state access needed)
+              sessionStorage.setItem('overspentContext', JSON.stringify(overspentItemsForModal));
+              goto('/coach');
+            }}
           >
             <span class="material-symbols-outlined text-sm">chat</span>
-            Ask AI Coach
-          </a>
+            Ask Coach
+          </PixelButton>
         {/if}
       </div>
     </div>
@@ -472,51 +550,71 @@
 {/if}
 
 <!-- Charts & Details Grid -->
-<section class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+<section class="grid grid-cols-1 gap-6 lg:grid-cols-3 mt-6">
   <!-- Spending Chart (2 columns) -->
   <div class="lg:col-span-2">
     {#if loading}
-      <div class="bg-surface-dark rounded-xl p-8 flex flex-col items-center justify-center border border-border-dark min-h-[300px]">
-        <div class="inline-block animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent"></div>
-        <p class="text-text-muted mt-4">Loading budget data...</p>
-      </div>
+      <IsometricCard class="flex flex-col items-center justify-center min-h-[300px]">
+        <div class="inline-block animate-spin h-8 w-8 border-4 border-[var(--color-primary)] border-t-transparent"></div>
+        <p class="text-[var(--color-text-muted)] mt-4 font-mono">Loading Budget...</p>
+      </IsometricCard>
     {:else if spendingData.length > 0}
       <SpendingChart
         data={spendingData}
-        total={formatAmount(totalBudgetWithIncome)}
-        remainingBudget={remainingBudgetData}
+        total={formattedTotalWithIncome}
+        remainingBudget={{
+          value: remainingBudgetValue,
+          formattedValue: remainingBudgetFormatted,
+          percentage: remainingBudgetPercentage
+        }}
         onColorChange={handleColorChange}
       />
     {:else}
-      <div class="bg-surface-dark rounded-xl p-8 flex flex-col items-center justify-center border border-border-dark min-h-[300px]">
-        <span class="material-symbols-outlined text-5xl text-text-muted mb-4">pie_chart</span>
-        <h3 class="text-lg font-semibold text-white mb-2">No budget set yet</h3>
-        <p class="text-text-muted text-center max-w-sm">
-          Go to Budget page or use AI Coach to set up your monthly budget
+      <IsometricCard class="flex flex-col items-center justify-center min-h-[300px] text-center">
+        <span class="material-symbols-outlined text-5xl text-[var(--color-text-muted)] mb-4">pie_chart</span>
+        <h3 class="text-lg font-bold text-[var(--color-text)] mb-2 font-display uppercase">No Data Found</h3>
+        <p class="text-[var(--color-text-muted)] max-w-sm font-mono text-sm">
+          Initialize your budget to see data.
         </p>
-        <a
-          href="/budget"
-          class="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white font-medium hover:bg-primary-hover transition-colors"
-        >
-          <span class="material-symbols-outlined">add</span>
-          Set Up Budget
-        </a>
-      </div>
+        <div class="mt-4">
+            <PixelButton variant="primary" onclick={() => goto('/budget')}>
+                <span class="material-symbols-outlined">add</span>
+                <span>Set Up Budget</span>
+            </PixelButton>
+        </div>
+      </IsometricCard>
     {/if}
   </div>
 
   <!-- Recent Expenses (1 column) -->
   <div class="lg:col-span-1">
     {#if recentExpenses.length > 0}
-      <RecentExpenses expenses={recentExpenses} currency={currencies[selectedCurrency].symbol} />
+      <RecentExpenses expenses={recentExpenses} currency={currentCurrencySymbol} />
     {:else}
-      <div class="bg-surface-dark rounded-xl p-8 flex flex-col items-center justify-center border border-border-dark min-h-[300px]">
-        <span class="material-symbols-outlined text-5xl text-text-muted mb-4">receipt_long</span>
-        <h3 class="text-lg font-semibold text-white mb-2">No transactions yet</h3>
-        <p class="text-text-muted text-center">
-          Add transactions to track spending
+      <IsometricCard class="flex flex-col items-center justify-center min-h-[300px] text-center">
+        <span class="material-symbols-outlined text-5xl text-[var(--color-text-muted)] mb-4">receipt_long</span>
+        <h3 class="text-lg font-bold text-[var(--color-text)] mb-2 font-display uppercase">Empty Log</h3>
+        <p class="text-[var(--color-text-muted)] font-mono text-sm">
+          No transactions recorded.
         </p>
-      </div>
+      </IsometricCard>
     {/if}
   </div>
-</section>
+    </section>
+    </div>
+  </div>
+</div>
+
+<style>
+    .custom-scrollbar::-webkit-scrollbar {
+        width: 12px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+        background: var(--color-bg);
+        border-left: 2px solid rgba(0,0,0,0.1);
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: var(--color-surface-raised);
+        border: 2px solid var(--color-border);
+    }
+</style>

@@ -7,7 +7,7 @@ import { DATABASE_URL } from '$env/static/private';
 export * from './schema';
 
 // Connection for queries
-const queryClient = postgres(DATABASE_URL);
+export const queryClient = postgres(DATABASE_URL);
 
 // Drizzle instance
 export const db = drizzle(queryClient, { schema });

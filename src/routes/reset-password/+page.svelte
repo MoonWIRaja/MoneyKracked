@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Card, Input } from '$lib/components/ui';
+  import { PixelButton, Card, Input, IsometricCard } from '$lib/components/ui';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
@@ -13,169 +13,138 @@
   let isValidToken = $state(true);
 
   onMount(() => {
-    // Get token from URL query params
     const urlToken = $page.url.searchParams.get('token');
     if (!urlToken) {
       isValidToken = false;
-      error = 'Invalid reset link. Please request a new password reset.';
+      error = 'INVALID_RESET_LINK';
     }
     token = urlToken || '';
   });
 
   async function handleResetPassword() {
-    if (!newPassword || !confirmPassword) {
-      error = 'Please fill in all fields';
-      return;
-    }
+    if (!newPassword || !confirmPassword) { error = 'INPUT_REQUIRED'; return; }
+    if (newPassword.length < 8) { error = 'KEY_TOO_SHORT'; return; }
+    if (newPassword !== confirmPassword) { error = 'PASSWORDS_MISMATCH'; return; }
 
-    if (newPassword.length < 8) {
-      error = 'Password must be at least 8 characters long';
-      return;
-    }
-
-    if (newPassword !== confirmPassword) {
-      error = 'Passwords do not match';
-      return;
-    }
-
-    loading = true;
-    error = '';
-
+    loading = true; error = '';
     try {
       const response = await fetch('/api/reset-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, newPassword })
       });
-
       const data = await response.json();
-
-      if (response.ok) {
-        success = true;
-      } else {
-        throw new Error(data.error || 'Failed to reset password');
-      }
+      if (response.ok) success = true;
+      else throw new Error(data.error || 'RESET_FAILURE');
     } catch (err: any) {
-      error = err.message || 'Something went wrong. Please try again.';
-    } finally {
-      loading = false;
-    }
+      error = err.message || 'SYSTEM_FAULT';
+    } finally { loading = false; }
   }
 
-  function goToLogin() {
-    goto('/login');
-  }
+  function goToLogin() { goto('/login'); }
 </script>
 
 <svelte:head>
   <title>Reset Password - MoneyKracked</title>
 </svelte:head>
 
-<div class="min-h-screen bg-bg-dark flex items-center justify-center p-4">
-  <div class="w-full max-w-md">
-    <!-- Brand Header -->
-    <div class="text-center mb-8">
-      <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/20 text-primary mb-4">
-        <span class="material-symbols-outlined text-3xl">lock_reset</span>
+<div class="min-h-screen bg-[var(--color-bg)] flex flex-col items-center justify-center p-6 relative overflow-hidden">
+  <div class="absolute inset-0 opacity-10 pointer-events-none" 
+    style="background-image: radial-gradient(var(--color-primary) 1px, transparent 1px); background-size: 24px 24px;">
+  </div>
+
+  <div class="w-full max-w-sm relative z-10">
+    <div class="text-center mb-10">
+      <div class="inline-flex items-center justify-center w-20 h-20 border-4 border-black bg-[var(--color-primary)] shadow-[4px_4px_0px_0px_var(--color-shadow)] mb-4">
+        <span class="material-symbols-outlined text-4xl text-black">key_visualizer</span>
       </div>
-      <h1 class="text-2xl font-bold text-white">MoneyKracked</h1>
+      <h1 class="text-2xl font-display text-[var(--color-primary)] tracking-tighter uppercase">MoneyKracked</h1>
+      <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest mt-1">PASSWORD_RECONSTRUCTION</p>
     </div>
 
-    <Card>
+    <IsometricCard title={!isValidToken ? "LINK_EXPIRED" : success ? "KEY_UPDATED" : "NEW_CREDENTIALS"}>
       {#if !isValidToken}
-        <!-- Invalid Token -->
-        <div class="text-center py-6">
-          <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-danger/20 text-danger mb-4">
-            <span class="material-symbols-outlined text-3xl">error</span>
+        <div class="space-y-6 text-center py-4">
+          <div class="inline-flex items-center justify-center w-16 h-16 border-4 border-black bg-[var(--color-danger)] shadow-[4px_4px_0px_0px_var(--color-shadow)] mb-2">
+            <span class="material-symbols-outlined text-white">link_off</span>
           </div>
-          <h2 class="text-xl font-bold text-white mb-2">Invalid Reset Link</h2>
-          <p class="text-text-muted text-sm mb-6">
-            This password reset link is invalid or has expired.
-          </p>
-          <div class="space-y-3">
-            <Button class="w-full" onclick={() => goto('/forgot-password')}>
-              Request New Reset Link
-            </Button>
-            <Button variant="secondary" class="w-full" onclick={goToLogin}>
-              Back to Login
-            </Button>
+          <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase">THE_RECOVERY_TOKEN_IS_INVALID_OR_HAS_REACHED_EXPIRATION.</p>
+          <div class="space-y-3 pt-2">
+            <PixelButton variant="primary" class="w-full text-xs" onclick={() => goto('/forgot-password')}>REQUEST_NEW_LINK</PixelButton>
+            <PixelButton variant="ghost" class="w-full text-xs" onclick={goToLogin}>RETURN_TO_BASE</PixelButton>
           </div>
         </div>
 
       {:else if !success}
-        <!-- Reset Password Form -->
-        <div class="text-center mb-6">
-          <h2 class="text-xl font-bold text-white mb-2">Reset Your Password</h2>
-          <p class="text-text-muted text-sm">
-            Enter your new password below.
-          </p>
-        </div>
+        <div class="space-y-6">
+          <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase text-center mt-2">CONFIGURE_NEW_ACCESS_KEY_FOR_USER_ACCOUNT.</p>
 
-        {#if error}
-          <div class="mb-4 p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm">
-            {error}
+          {#if error}
+            <div class="p-3 border-4 border-black bg-[var(--color-danger)] text-black text-[10px] font-mono uppercase">
+               ERROR: {error}
+            </div>
+          {/if}
+
+          <div class="space-y-5">
+            <Input
+              label="NEW_SECRET_KEY"
+              type="password"
+              bind:value={newPassword}
+              placeholder="..."
+              disabled={loading}
+            />
+
+            <Input
+              label="VERIFY_NEW_KEY"
+              type="password"
+              bind:value={confirmPassword}
+              placeholder="..."
+              disabled={loading}
+            />
+
+            <div class="p-4 bg-[var(--color-surface-raised)] border-4 border-black text-left space-y-2">
+                <p class="text-[9px] font-display text-[var(--color-primary)] uppercase">CONSTRAINTS:</p>
+                <ul class="text-[8px] font-mono uppercase space-y-1">
+                  <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 bg-[var(--color-primary)]"></span> LENGTH >= 8 CHARS</li>
+                  <li class="flex items-center gap-2"><span class="w-1.5 h-1.5 bg-[var(--color-primary)]"></span> MUST_DIFFER_FROM_PREVIOUS</li>
+                </ul>
+            </div>
+
+            <PixelButton
+              variant="primary"
+              class="w-full text-xs"
+              onclick={handleResetPassword}
+              loading={loading}
+            >
+              COMMIT_CHANGES
+            </PixelButton>
+
+            <button
+              onclick={goToLogin}
+              class="w-full text-[9px] font-mono text-[var(--color-text-muted)] hover:text-[var(--color-text)] uppercase tracking-wider transition-colors"
+            >
+              ABORT_AND_EXIT_TO_LOGIN
+            </button>
           </div>
-        {/if}
-
-        <div class="space-y-4">
-          <Input
-            label="New Password"
-            type="password"
-            bind:value={newPassword}
-            placeholder="Enter new password (min. 8 characters)"
-            onkeydown={(e) => e.key === 'Enter' && handleResetPassword()}
-            disabled={loading}
-          />
-
-          <Input
-            label="Confirm New Password"
-            type="password"
-            bind:value={confirmPassword}
-            placeholder="Confirm your new password"
-            onkeydown={(e) => e.key === 'Enter' && handleResetPassword()}
-            disabled={loading}
-          />
-
-          <div class="p-3 bg-bg-dark rounded-lg border border-border-dark text-xs text-text-muted">
-            <p class="font-medium text-white mb-1">Password requirements:</p>
-            <ul class="list-disc list-inside space-y-1">
-              <li>At least 8 characters long</li>
-              <li>Should be different from your current password</li>
-            </ul>
-          </div>
-
-          <Button
-            class="w-full"
-            onclick={handleResetPassword}
-            disabled={loading}
-            loading={loading}
-          >
-            {loading ? 'Resetting...' : 'Reset Password'}
-          </Button>
-
-          <button
-            onclick={goToLogin}
-            class="w-full text-sm text-text-muted hover:text-white transition-colors"
-          >
-            Back to Login
-          </button>
         </div>
-
       {:else}
-        <!-- Success Message -->
-        <div class="text-center py-6">
-          <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-success/20 text-success mb-4">
-            <span class="material-symbols-outlined text-3xl">check_circle</span>
+        <div class="space-y-6 text-center py-4">
+          <div class="inline-flex items-center justify-center w-16 h-16 border-4 border-black bg-[var(--color-primary)] shadow-[4px_4px_0px_0px_var(--color-shadow)] mb-2">
+            <span class="material-symbols-outlined text-white animate-bounce">verified_user</span>
           </div>
-          <h2 class="text-xl font-bold text-white mb-2">Password Reset Successful!</h2>
-          <p class="text-text-muted text-sm mb-6">
-            Your password has been successfully reset. You can now login with your new password.
+          <p class="text-[10px] font-mono text-[var(--color-text)] uppercase">CREDENTIAL_SYNCHRONIZATION_COMPLETE!</p>
+          <p class="text-[9px] font-mono text-[var(--color-text-muted)] uppercase leading-relaxed">
+             NEW_KEY_IS_NOW_ACTIVE._STORE_SECURELY_IN_VAULT.
           </p>
-          <Button class="w-full" onclick={goToLogin}>
-            Go to Login
-          </Button>
+          <PixelButton variant="primary" class="w-full text-xs" onclick={goToLogin}>
+            INIT_NEW_SESSION
+          </PixelButton>
         </div>
       {/if}
-    </Card>
+    </IsometricCard>
+
+    <p class="text-center mt-8 text-[8px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest opacity-50">
+      SECURITY_SUBSYSTEM_ONLINE // NO_DUMMY_DATA
+    </p>
   </div>
 </div>

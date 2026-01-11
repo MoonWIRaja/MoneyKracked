@@ -1,19 +1,13 @@
-import { redirect } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
-import { exchangeRates } from '$lib/server/db/schema';
 import type { LayoutServerLoad } from './$types';
 
-export const load: LayoutServerLoad = async ({ locals, cookies }) => {
-  // If not authenticated, redirect to login
-  if (!locals.user) {
-    throw redirect(303, '/login');
-  }
+// Cache exchange rates for 10 minutes
+let cachedRates: Record<string, Record<string, number>> | null = null;
+let ratesCacheTime = 0;
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
-  // PERFORMANCE: Preload exchange rates
-  // This makes them available immediately to all child pages without additional API calls
-  const ratesData = await db.query.exchangeRates.findMany();
-
-  // Get preferences from cookie (not database)
+export const load: LayoutServerLoad = async ({ cookies, locals }) => {
+  // Get preferences from cookie (fast, no DB query)
   let currency = 'MYR';
   let theme = 'dark';
   try {
@@ -25,21 +19,31 @@ export const load: LayoutServerLoad = async ({ locals, cookies }) => {
     }
   } catch { }
 
-  // Build exchange rates map for client
-  const ratesMap: Record<string, Record<string, number>> = {};
-  for (const rate of ratesData) {
-    if (!ratesMap[rate.fromCurrency]) {
-      ratesMap[rate.fromCurrency] = {};
+  // Use cached rates if available and fresh
+  const now = Date.now();
+  if (!cachedRates || now - ratesCacheTime > CACHE_TTL) {
+    const ratesData = await db.query.exchangeRates.findMany();
+    const ratesMap: Record<string, Record<string, number>> = {};
+    for (const rate of ratesData) {
+      if (!ratesMap[rate.fromCurrency]) {
+        ratesMap[rate.fromCurrency] = {};
+      }
+      ratesMap[rate.fromCurrency][rate.toCurrency] = parseFloat(rate.rate as string);
     }
-    ratesMap[rate.fromCurrency][rate.toCurrency] = parseFloat(rate.rate as string);
+    cachedRates = ratesMap;
+    ratesCacheTime = now;
   }
 
   return {
-    user: locals.user,
-    session: locals.session,
-    // Preloaded data for instant page loads
-    rates: ratesMap,
+    rates: cachedRates,
     currency,
-    theme
+    theme,
+    // Pass user from locals (set by hooks.server.ts session check)
+    user: locals.user ? {
+      id: locals.user.id,
+      email: locals.user.email,
+      name: locals.user.name,
+      image: locals.user.image
+    } : null
   };
 };

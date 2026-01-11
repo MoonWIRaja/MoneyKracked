@@ -1,58 +1,80 @@
 @import "tailwindcss";
 
-/* ===== MoneyKracked Design System ===== */
-@theme {
-  /* Primary Colors - Green Finance Theme */
-  --color-primary: #21c462;
-  --color-primary-hover: #1db355;
-  --color-primary-light: #21c46220;
+/* ===== MoneyKracked Pixel 3D Design System ===== */
+/* @theme block removed - moved to tailwind.config.js for compatibility */
 
-  /* Background Colors */
-  --color-bg-dark: #122018;
-  --color-bg-light: #f6f8f7;
+/* ===== Theme Variables ===== */
+:root {
+  /* Default to Dark Mode (Cyberpunk/Game Night) */
+  --primary: #4ade80;
+  /* Bright Green */
+  --primary-dark: #166534;
+  /* Dark Green */
+  --secondary: #a78bfa;
+  /* Soft Purple */
+  --accent: #f472b6;
+  /* Pink */
 
-  /* Surface Colors (Cards, Modals) */
-  --color-surface-dark: #1a2c22;
-  --color-surface-light: #ffffff;
+  --bg-color: #111827;
+    --surface-color: #1f2937;
+    --surface-raised-color: #374151;
 
-  /* Border Colors */
-  --color-border-dark: #2a372f;
-  --color-border-light: #e5e7eb;
+  --text-color: #f3f4f6;
+    --text-muted: #9ca3af;
 
-  /* Text Colors */
-  --color-text-primary: #ffffff;
-  --color-text-secondary: #9ca3af;
-  --color-text-muted: #6b7280;
-
-  /* Semantic Colors */
-  --color-success: #22c55e;
-  --color-warning: #f59e0b;
-  --color-danger: #ef4444;
-  --color-info: #3b82f6;
-
-  /* Category Colors */
-  --color-category-food: #21c462;
-  --color-category-transport: #10b981;
-  --color-category-utilities: #86efac;
-  --color-category-entertainment: #f97316;
-  --color-category-shopping: #8b5cf6;
-  --color-category-other: #6b7280;
+  --border-color: #000000;
+    --shadow-color: #000000;
 
   /* Fonts */
-  --font-family-display: 'Inter', system-ui, sans-serif;
+    --font-display: "Press Start 2P", cursive;
+    --font-body: "VT323", monospace;
+    --font-ui: "Inter", sans-serif;
+  
+    /* Tailwind Compatibility Aliases */
+    --color-primary: var(--primary);
+    --color-secondary: var(--secondary);
+    --color-accent: var(--accent);
+    --color-bg: var(--bg-color);
+    --color-surface: var(--surface-color);
+    --color-surface-raised: var(--surface-raised-color);
+    --color-text: var(--text-color);
+    --color-text-muted: var(--text-muted);
+    --color-success: #22c55e;
+    --color-danger: #ef4444;
+    --color-warning: #f59e0b;
+    --color-border: var(--border-color);
+      --color-shadow: var(--shadow-color);
+      --spacing-depth: 4px;
 
-  /* Border Radius */
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 1rem;
-  --radius-xl: 1.5rem;
-  --radius-full: 9999px;
+  color-scheme: dark;
+  }
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
-  --shadow-primary: 0 10px 25px -5px rgb(33 196 98 / 0.3);
+/* Light Mode (Sketch/Blueprint) */
+[data-theme="light"] {
+  --primary: #16a34a;
+  /* Green */
+  --primary-dark: #14532d;
+  --secondary: #7c3aed;
+  /* Purple */
+  --accent: #db2777;
+  /* Pink */
+
+  --bg-color: #f3f4f6;
+    /* Light Gray */
+    --surface-color: #ffffff;
+    --surface-raised-color: #e5e7eb;
+    --text-color: #111827;
+    --text-muted: #4b5563;
+      --color-success: #16a34a;
+        --color-danger: #dc2626;
+        --color-warning: #d97706;
+      
+        --border-color: #1f2937;
+        --shadow-color: #9ca3af;
+        --shadow-color: #000000;
+        /* Keep black for comic/pixel look */
+      
+        color-scheme: light;
 }
 
 /* ===== Base Styles ===== */
@@ -61,110 +83,123 @@
 }
 
 html {
-  font-family: var(--font-family-display);
+  font-family: var(--font-ui);
   scroll-behavior: smooth;
+  background-color: var(--color-bg);
+    transition: background-color 0.3s ease;
+    overflow: hidden;
+    height: 100%;
 }
 
 body {
   margin: 0;
-  background-color: var(--color-bg-dark);
-  color: var(--color-text-primary);
-  min-height: 100vh;
-  overflow-x: hidden;
+  background-color: var(--bg-color);
+    color: var(--text-color);
+    height: 100%;
+    overflow: hidden;
+    font-family: var(--font-body);
+    /* Change to body/mono font */
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: none;
+    -moz-osx-font-smoothing: unset;
+    image-rendering: pixelated;
 }
 
-/* ===== Custom Scrollbar ===== */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  line-height: 1.2;
+  text-transform: uppercase;
+  letter-spacing: -0.025em;
+  /* Tighter for Press Start 2P looks better */
+  margin-bottom: 0.5em;
+  color: var(--color-primary);
+  text-shadow: 2px 2px 0px var(--color-shadow);
+}
+
+/* ===== Pixel Art 3D Utilities ===== */
+
+/* The Isometric Card Container */
+.iso-card {
+  background-color: var(--color-surface);
+  border: 2px solid var(--color-border);
+  box-shadow:
+    var(--spacing-depth) var(--spacing-depth) 0px 0px var(--color-shadow);
+  transition: transform 0.1s, box-shadow 0.1s;
+  position: relative;
+}
+
+/* Interactive elements press down */
+.iso-btn {
+  background-color: var(--color-primary);
+  color: #000;
+    border: 2px solid var(--color-border);
+    font-family: var(--font-display);
+    font-size: 12px;
+    /* Precise pixel size */
+    padding: 0.75rem 1.5rem;
+    cursor: pointer;
+    position: relative;
+    box-shadow:
+      4px 4px 0px 0px var(--color-shadow);
+    transition: all 0.1s;
+    text-transform: uppercase;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.iso-btn:hover {
+  transform: translate(-1px, -1px);
+  box-shadow:
+    5px 5px 0px 0px var(--color-shadow);
+}
+
+.iso-btn:active {
+  transform: translate(2px, 2px);
+  box-shadow:
+    2px 2px 0px 0px var(--color-shadow);
+}
+
+.iso-input {
+  background-color: var(--color-bg);
+  border: 2px solid var(--color-border);
+  color: var(--color-text);
+  padding: 0.75rem 1rem 0.75rem 2.75rem;
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 1.1rem;
+  box-shadow: inset 3px 3px 0px 0px rgba(0, 0, 0, 0.1);
+}
+
+.iso-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: inset 3px 3px 0px 0px rgba(0, 0, 0, 0.2);
+}
+
+/* Scoped Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 12px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-bg-dark);
+  background: var(--color-bg);
+  border-left: 2px solid var(--color-border);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border-dark);
-  border-radius: 4px;
+  background: var(--color-surface-raised);
+  border: 2px solid var(--color-border);
+  box-shadow: inset -1px -1px 0px 0px rgba(0, 0, 0, 0.2);
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-primary);
-}
-
-/* ===== Typography ===== */
-h1, h2, h3, h4, h5, h6 {
-  font-weight: 700;
-  line-height: 1.2;
-}
-
-/* ===== Focus States ===== */
-:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-
-/* ===== Selection ===== */
-::selection {
-  background-color: var(--color-primary);
-  color: white;
-}
-
-/* ===== Transitions ===== */
-.transition-base {
-  transition: all 0.2s ease-in-out;
-}
-
-/* ===== Material Symbols ===== */
-.material-symbols-outlined {
-  font-variation-settings:
-    'FILL' 0,
-    'wght' 400,
-    'GRAD' 0,
-    'opsz' 24;
-}
-
-.material-symbols-filled {
-  font-variation-settings:
-    'FILL' 1,
-    'wght' 400,
-    'GRAD' 0,
-    'opsz' 24;
-}
-
-/* ===== PERFORMANCE: CSS Containment ===== */
-.card, .modal, .sidebar {
-  contain: layout style;
-}
-
-.chart-container, .transaction-list {
-  contain: layout style paint;
-}
-
-/* ===== PERFORMANCE: GPU Acceleration ===== */
-.gpu-accelerated {
-  transform: translateZ(0);
-  backface-visibility: hidden;
-  perspective: 1000px;
-}
-
-/* ===== PERFORMANCE: Fade Animation ===== */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(-10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.fade-in {
-  animation: fadeIn 0.3s ease-out forwards;
-}
-
-/* ===== PERFORMANCE: Image optimization ===== */
-img {
-  image-rendering: auto;
-}
-
-@supports (image-rendering: crisp-edges) {
-  img {
-    image-rendering: crisp-edges;
-  }
 }

@@ -228,23 +228,23 @@ async function getUserInfo(request: Request, cookies: any): Promise<{ id: string
 		return { id: session.user.id, name: session.user.name || null };
 	}
 
-	// Fallback to custom session
-	const customToken = cookies.get('better-auth.session_token');
+	// Check mk_session cookie first (our custom session)
+	let customToken = cookies.get('mk_session');
+	if (!customToken) {
+		customToken = cookies.get('better-auth.session_token');
+	}
 	if (customToken) {
-		const { session: sessionTable } = await import('$lib/server/db/schema');
-		const { gt } = await import('drizzle-orm');
-		const dbSession = await db.query.session.findFirst({
-			where: and(
-				eq(sessionTable.token, customToken),
-				gt(sessionTable.expiresAt, new Date())
-			)
-		});
-		if (dbSession) {
-			// Get user name from database
-			const userInfo = await db.query.user.findFirst({
-				where: eq(user.id, dbSession.userId)
-			});
-			return { id: dbSession.userId, name: userInfo?.name || null };
+		const { queryClient } = await import('$lib/server/db');
+		// Extract session token (before the dot if signed)
+		const sessionToken = customToken.includes('.') ? customToken.split('.')[0] : customToken;
+
+		const result = await queryClient.unsafe(
+			'SELECT s.user_id, u.name FROM session s INNER JOIN "user" u ON s.user_id = u.id WHERE s.token = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW()) LIMIT 1',
+			[sessionToken]
+		);
+
+		if (result && result.length > 0) {
+			return { id: (result[0] as any).user_id, name: (result[0] as any).name };
 		}
 	}
 	return { id: null, name: null };

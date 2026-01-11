@@ -6,6 +6,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
+		"start": "node -r dotenv/config build/index.js",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
@@ -13,6 +14,7 @@
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^3.3.1",
+		"@sveltejs/adapter-node": "^5.4.0",
 		"@sveltejs/kit": "^2.15.0",
 		"@sveltejs/vite-plugin-svelte": "^5.0.3",
 		"@tailwindcss/vite": "^4.1.18",
@@ -30,6 +32,7 @@
 		"@node-rs/argon2": "^2.0.2",
 		"@types/nodemailer": "^7.0.4",
 		"better-auth": "^1.4.10",
+		"dotenv": "^17.2.3",
 		"drizzle-orm": "^0.45.1",
 		"nodemailer": "^7.0.12",
 		"otpauth": "^9.4.1",

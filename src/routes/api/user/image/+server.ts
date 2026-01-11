@@ -1,27 +1,9 @@
 import { json } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
-import { user as userTable, session as sessionTable } from '$lib/server/db/schema';
-import { eq, and, gt } from 'drizzle-orm';
+import { user as userTable } from '$lib/server/db/schema';
+import { eq } from 'drizzle-orm';
 import type { RequestHandler } from './$types';
-
-// Get user ID helper - same as preferences endpoint
-async function getUserId(request: Request, cookies: any): Promise<string | null> {
-  const { auth } = await import('$lib/server/auth');
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (session?.user?.id) return session.user.id;
-
-  const customToken = cookies.get('better-auth.session_token');
-  if (customToken) {
-    const dbSession = await db.query.session.findFirst({
-      where: and(
-        eq(sessionTable.token, customToken),
-        gt(sessionTable.expiresAt, new Date())
-      )
-    });
-    if (dbSession) return dbSession.userId;
-  }
-  return null;
-}
+import { getUserId } from '$lib/server/session';
 
 /**
  * Resize and compress image using canvas (client-side) approach

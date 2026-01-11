@@ -165,50 +165,26 @@ export async function preloadAppData(): Promise<{
   return { exchangeRates, preferences };
 }
 
-/**
- * Convert amount from MYR to selected currency
- */
-export function convertAmountMYR(
-  amountMYR: number,
-  selectedCurrency: Currency,
-  exchangeRates: Record<string, Record<string, number>>
-): number {
-  if (selectedCurrency === 'MYR') return amountMYR;
+// ============================================================
+// Theme Store - simple getter/setter pattern with Svelte 5 reactivity
+// ============================================================
+const themeState = $state({ value: 'dark' });
 
-  const rate = exchangeRates.MYR?.[selectedCurrency];
-  if (rate) {
-    return Math.round(amountMYR * rate * 100) / 100;
-  }
-
-  // Fallback default rates
-  const defaultRates: Record<string, number> = { SGD: 0.31, USD: 0.22 };
-  const fallbackRate = defaultRates[selectedCurrency];
-  if (fallbackRate) {
-    return Math.round(amountMYR * fallbackRate * 100) / 100;
-  }
-  return amountMYR;
+export function getAppTheme(): string {
+  return themeState.value;
 }
 
-/**
- * Convert amount from selected currency back to MYR
- */
-export function convertToMYR(
-  amount: number,
-  selectedCurrency: Currency,
-  exchangeRates: Record<string, Record<string, number>>
-): number {
-  if (selectedCurrency === 'MYR') return amount;
-
-  const rate = exchangeRates.MYR?.[selectedCurrency];
-  if (rate && rate > 0) {
-    return Math.round((amount / rate) * 100) / 100;
+export function setAppTheme(theme: string) {
+  themeState.value = theme;
+  
+  // Apply to document immediately
+  if (typeof document !== 'undefined') {
+    document.documentElement.setAttribute('data-theme', theme);
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
   }
-
-  // Fallback default rates
-  const defaultRates: Record<string, number> = { SGD: 0.31, USD: 0.22 };
-  const fallbackRate = defaultRates[selectedCurrency];
-  if (fallbackRate && fallbackRate > 0) {
-    return Math.round((amount / fallbackRate) * 100) / 100;
-  }
-  return amount;
 }
+

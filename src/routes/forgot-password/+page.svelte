@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Card, Input } from '$lib/components/ui';
+  import { PixelButton, Card, Input, IsometricCard } from '$lib/components/ui';
   import { goto } from '$app/navigation';
 
   let email = $state('');
@@ -8,115 +8,106 @@
   let error = $state('');
 
   async function handleForgotPassword() {
-    if (!email) {
-      error = 'Please enter your email address';
-      return;
-    }
-
-    loading = true;
-    error = '';
-
+    if (!email) { error = 'INPUT_REQUIRED'; return; }
+    loading = true; error = '';
     try {
       const response = await fetch('/api/forgot-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email })
       });
-
       const data = await response.json();
-
-      if (response.ok) {
-        success = true;
-      } else {
-        throw new Error(data.error || 'Failed to send reset email');
-      }
+      if (response.ok) success = true;
+      else throw new Error(data.error || 'TRANS_FAILURE');
     } catch (err: any) {
-      error = err.message || 'Something went wrong. Please try again.';
-    } finally {
-      loading = false;
-    }
+      error = err.message || 'SYSTEM_FAULT';
+    } finally { loading = false; }
   }
 
-  function goToLogin() {
-    goto('/login');
-  }
+  function goToLogin() { goto('/login'); }
 </script>
 
 <svelte:head>
   <title>Forgot Password - MoneyKracked</title>
 </svelte:head>
 
-<div class="min-h-screen bg-bg-dark flex items-center justify-center p-4">
-  <div class="w-full max-w-md">
-    <!-- Brand Header -->
-    <div class="text-center mb-8">
-      <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/20 text-primary mb-4">
-        <span class="material-symbols-outlined text-3xl">lock_reset</span>
+<div class="min-h-screen bg-[var(--color-bg)] flex flex-col items-center justify-center p-6 relative overflow-hidden">
+  <div class="absolute inset-0 opacity-10 pointer-events-none" 
+    style="background-image: radial-gradient(var(--color-primary) 1px, transparent 1px); background-size: 24px 24px;">
+  </div>
+
+  <div class="w-full max-w-sm relative z-10">
+    <div class="text-center mb-10">
+      <div class="inline-flex items-center justify-center w-20 h-20 border-4 border-black bg-[var(--color-primary)] shadow-[4px_4px_0px_0px_var(--color-shadow)] mb-4">
+        <span class="material-symbols-outlined text-4xl text-black">lock_open</span>
       </div>
-      <h1 class="text-2xl font-bold text-white">MoneyKracked</h1>
+      <h1 class="text-2xl font-display text-[var(--color-primary)] tracking-tighter uppercase">MoneyKracked</h1>
+      <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest mt-1">RECOVERY_PROTOCOL_v2</p>
     </div>
 
-    <Card>
+    <IsometricCard title={success ? "EMAIL_DISPATCHED" : "RECOVER_ACCESS"}>
       {#if !success}
-        <!-- Forgot Password Form -->
-        <div class="text-center mb-6">
-          <h2 class="text-xl font-bold text-white mb-2">Forgot Your Password?</h2>
-          <p class="text-text-muted text-sm">
-            Enter your email address and we'll send you a link to reset your password.
+        <div class="space-y-6">
+          <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase text-center mt-2 leading-relaxed">
+            PROVIDE_ASSOCIATED_EMAIL_TO_RECEIVE_RECOVERY_DATA_LINK.
           </p>
-        </div>
 
-        {#if error}
-          <div class="mb-4 p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm">
-            {error}
+          {#if error}
+            <div class="p-3 border-4 border-black bg-[var(--color-danger)] text-black text-[10px] font-mono uppercase">
+               ERROR: {error}
+            </div>
+          {/if}
+
+          <div class="space-y-4">
+            <Input
+              label="RECOVERY_EMAIL"
+              type="email"
+              bind:value={email}
+              placeholder="..."
+              onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && handleForgotPassword()}
+              disabled={loading}
+            />
+
+            <PixelButton
+              variant="primary"
+              class="w-full text-xs"
+              onclick={handleForgotPassword}
+              loading={loading}
+            >
+              RUN_RECOVERY
+            </PixelButton>
+
+            <button
+              onclick={goToLogin}
+              class="w-full text-[9px] font-mono text-[var(--color-text-muted)] hover:text-[var(--color-text)] uppercase tracking-wider transition-colors"
+            >
+              ABORT_AND_EXIT_TO_LOGIN
+            </button>
           </div>
-        {/if}
-
-        <div class="space-y-4">
-          <Input
-            label="Email Address"
-            type="email"
-            bind:value={email}
-            placeholder="Enter your email"
-            onkeydown={(e) => e.key === 'Enter' && handleForgotPassword()}
-            disabled={loading}
-          />
-
-          <Button
-            class="w-full"
-            onclick={handleForgotPassword}
-            disabled={loading}
-            loading={loading}
-          >
-            {loading ? 'Sending...' : 'Send Reset Link'}
-          </Button>
-
-          <button
-            onclick={goToLogin}
-            class="w-full text-sm text-text-muted hover:text-white transition-colors"
-          >
-            Back to Login
-          </button>
         </div>
       {:else}
-        <!-- Success Message -->
-        <div class="text-center py-6">
-          <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-success/20 text-success mb-4">
-            <span class="material-symbols-outlined text-3xl">email</span>
+        <div class="space-y-6 text-center py-4">
+          <div class="inline-flex items-center justify-center w-16 h-16 border-4 border-black bg-[var(--color-primary)] shadow-[4px_4px_0px_0px_var(--color-shadow)] mb-2">
+            <span class="material-symbols-outlined text-white animate-bounce">mark_email_read</span>
           </div>
-          <h2 class="text-xl font-bold text-white mb-2">Check Your Email</h2>
-          <p class="text-text-muted text-sm mb-6">
-            We've sent a password reset link to <strong class="text-white">{email}</strong>.
-          </p>
-          <div class="p-4 bg-bg-dark rounded-lg border border-border-dark text-sm text-text-muted mb-6">
-            <p class="mb-2">The link will expire in 1 hour.</p>
-            <p>If you don't see the email, check your spam folder.</p>
+          <p class="text-[10px] font-mono text-[var(--color-text)] uppercase">CHECK_RECOVERY_NODE: {email}</p>
+          
+          <div class="p-4 bg-[var(--color-surface-raised)] border-4 border-black text-left space-y-2">
+            <p class="text-[9px] font-display text-[var(--color-primary)] uppercase">WARNING:</p>
+            <p class="text-[9px] font-mono uppercase leading-relaxed">
+               LINK_VALID_FOR_60_MINUTES_ONLY._IF_NOT_FOUND_CHECK_SPAM_FILTER_BUFFER.
+            </p>
           </div>
-          <Button variant="secondary" onclick={goToLogin}>
-            Back to Login
-          </Button>
+
+          <PixelButton variant="primary" class="w-full text-xs" onclick={goToLogin}>
+            BACK_TO_LOGIN
+          </PixelButton>
         </div>
       {/if}
-    </Card>
+    </IsometricCard>
+
+    <p class="text-center mt-8 text-[8px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest opacity-50">
+      AUTHENTICATION_LAYER_ACTIVE // NO_DUMMY_DATA
+    </p>
   </div>
 </div>

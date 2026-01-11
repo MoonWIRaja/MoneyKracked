@@ -3,27 +3,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { transactions, categories, financialAccounts } from '$lib/server/db/schema';
 import { eq, and, desc, gte, lte } from 'drizzle-orm';
-
-// Get user ID helper
-async function getUserId(request: Request, cookies: any): Promise<string | null> {
-  const { auth } = await import('$lib/server/auth');
-  const session = await auth.api.getSession({ headers: request.headers });
-  if (session?.user?.id) return session.user.id;
-  
-  const customToken = cookies.get('better-auth.session_token');
-  if (customToken) {
-    const { session: sessionTable } = await import('$lib/server/db/schema');
-    const { gt } = await import('drizzle-orm');
-    const dbSession = await db.query.session.findFirst({
-      where: and(
-        eq(sessionTable.token, customToken),
-        gt(sessionTable.expiresAt, new Date())
-      )
-    });
-    if (dbSession) return dbSession.userId;
-  }
-  return null;
-}
+import { getUserId } from '$lib/server/session';
 
 /**
  * GET - List transactions with optional filters

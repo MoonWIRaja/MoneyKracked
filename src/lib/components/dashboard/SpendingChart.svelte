@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { Card } from '$lib/components/ui';
-  import { createEventDispatcher } from 'svelte';
+  import { IsometricCard, PixelButton } from '$lib/components/ui';
   
   interface CategoryData {
     name: string;
@@ -78,7 +77,7 @@
       segments.push({
         percentage: remaining.percentage,
         offset: offset,
-        color: '#21c462'
+        color: 'var(--color-primary)'
       });
       offset += remaining.percentage;
     }
@@ -101,27 +100,24 @@
   const segments = $derived(calculateSegments(data, remainingBudget));
 </script>
 
-<Card padding="lg" class="flex flex-col">
-  <div class="mb-6 flex items-center justify-between">
-    <div>
-      <h3 class="text-lg font-bold text-white">{title}</h3>
-      <p class="text-sm text-text-secondary">{subtitle}</p>
-    </div>
+<IsometricCard title="Budget Breakdown" class="flex flex-col h-full">
+  <div class="mb-6">
+    <h3 class="text-sm font-bold text-[var(--color-text)] font-display uppercase">{title}</h3>
+    <p class="text-xs text-[var(--color-text-muted)] font-mono">{subtitle}</p>
   </div>
   
   <div class="flex flex-col items-center gap-8 lg:flex-row lg:justify-around">
     <!-- Donut Chart -->
     <div class="relative h-48 w-48 flex-shrink-0">
-      <svg class="h-full w-full -rotate-90" viewBox="0 0 36 36">
+      <svg class="h-full w-full -rotate-90 drop-shadow-md" viewBox="0 0 36 36">
         <!-- Background Circle -->
         <circle
           cx="18"
           cy="18"
           r="15.9155"
           fill="none"
-          stroke="currentColor"
-          stroke-width="3"
-          class="text-border-dark"
+          stroke="var(--color-surface-raised)"
+          stroke-width="5"
         />
         
         <!-- Category Segments -->
@@ -132,124 +128,127 @@
             r="15.9155"
             fill="none"
             stroke={segment.color}
-            stroke-width="3"
+            stroke-width="5"
             stroke-dasharray="{segment.percentage} {100 - segment.percentage}"
             stroke-dashoffset={-segment.offset}
             class="transition-all duration-500"
           />
         {/each}
+        
+        <!-- Inner Pixel Hole (Optional decoration) -->
+        <circle
+            cx="18"
+            cy="18"
+            r="10"
+            fill="var(--color-surface)"
+            stroke="var(--color-border)"
+            stroke-width="0.5"
+        />
       </svg>
       
       <!-- Center Text -->
-      <div class="absolute inset-0 flex flex-col items-center justify-center">
-        <span class="text-xs font-medium text-text-muted">Total</span>
-        <span class="text-lg font-bold text-white">{total}</span>
+      <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+        <span class="text-[0.6rem] font-mono text-[var(--color-text-muted)] uppercase">Total</span>
+        <span class="text-sm font-bold text-[var(--color-text)] font-mono bg-[var(--color-surface)] px-1 border border-[var(--color-border)]">{total}</span>
       </div>
     </div>
     
     <!-- Legend Table -->
     <div class="flex-1 w-full max-w-md">
-      <table class="w-full">
+      <table class="w-full border-collapse">
         <thead>
-          <tr class="text-xs text-text-muted border-b border-border-dark">
-            <th class="text-left pb-2 font-medium">Category</th>
-            <th class="text-right pb-2 font-medium">Amount</th>
-            <th class="text-right pb-2 font-medium w-16">%</th>
+          <tr class="text-xs text-[var(--color-text-muted)] font-mono border-b-2 border-[var(--color-border)]">
+            <th class="text-left pb-2 font-normal">Category</th>
+            <th class="text-right pb-2 font-normal">Amount</th>
+            <th class="text-right pb-2 font-normal w-16">%</th>
           </tr>
         </thead>
-        <tbody>
-          <!-- Remaining Budget row (always first, highlighted) -->
+        <tbody class="font-mono text-sm">
+          <!-- Remaining Budget row -->
           {#if remainingBudget}
-            <tr class="bg-primary/10 font-semibold">
-              <td class="py-2.5 px-2 rounded-l-lg">
+            <tr class="bg-[var(--color-primary)]/10 text-[var(--color-primary)]">
+              <td class="py-2 pl-2 border-l-2 border-[var(--color-primary)]">
                 <div class="flex items-center gap-2">
-                  <div class="h-3 w-3 rounded-full bg-primary"></div>
-                  <span class="text-sm text-primary">Remaining</span>
+                  <div class="h-3 w-3 border border-black bg-[var(--color-primary)]"></div>
+                  <span>Remaining</span>
                 </div>
               </td>
-              <td class="py-2.5 text-right text-sm text-primary">{remainingBudget.formattedValue}</td>
-              <td class="py-2.5 px-2 text-right text-sm text-primary rounded-r-lg">{remainingBudget.percentage.toFixed(1)}%</td>
+              <td class="py-2 text-right">{remainingBudget.formattedValue}</td>
+              <td class="py-2 pr-2 text-right">{remainingBudget.percentage.toFixed(1)}%</td>
             </tr>
           {/if}
           
           <!-- Category rows -->
           {#each data as category, i}
-            <tr class="{i % 2 === 0 ? '' : 'bg-border-dark/30'}">
-              <td class="py-2 px-2 rounded-l-lg">
+            <tr class="border-b border-[var(--color-surface-raised)] hover:bg-[var(--color-surface-raised)]">
+              <td class="py-2 pl-2">
                 <div class="flex items-center gap-2">
                   <!-- Clickable color dot -->
                   <button
                     onclick={() => openColorPicker(category.name, category.color)}
-                    class="h-4 w-4 rounded-full border-2 border-white/20 hover:border-white/50 transition-colors cursor-pointer hover:scale-110"
+                    class="h-3 w-3 border border-black cursor-pointer hover:scale-125 transition-transform"
                     style="background-color: {category.color}"
-                    title="Click to change color"
+                    title="Change Color"
                   ></button>
-                  <span class="text-sm text-text-secondary">{category.name}</span>
+                  <span class="text-[var(--color-text)] truncate max-w-[100px]">{category.name}</span>
                 </div>
               </td>
-              <td class="py-2 text-right text-sm text-white">{category.formattedValue || '-'}</td>
-              <td class="py-2 px-2 text-right text-sm text-text-muted rounded-r-lg">{category.percentage.toFixed(1)}%</td>
+              <td class="py-2 text-right text-[var(--color-text)]">{category.formattedValue || '-'}</td>
+              <td class="py-2 pr-2 text-right text-[var(--color-text-muted)]">{category.percentage.toFixed(1)}%</td>
             </tr>
           {/each}
         </tbody>
       </table>
     </div>
   </div>
-</Card>
+</IsometricCard>
 
 <!-- Color Picker Modal -->
 {#if showColorPicker}
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-    <div class="bg-surface-dark rounded-2xl border border-border-dark w-full max-w-xs mx-4 shadow-2xl">
-      <div class="p-4 border-b border-border-dark">
-        <h3 class="text-lg font-bold text-white">Choose Color</h3>
-        <p class="text-sm text-text-muted">{colorPickerCategory}</p>
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <!-- Pixel Art Modal -->
+    <div class="bg-[var(--color-surface)] border-2 border-[var(--color-border)] shadow-[8px_8px_0px_0px_var(--color-shadow)] w-full max-w-xs">
+      <div class="p-3 border-b-2 border-[var(--color-border)] bg-[var(--color-surface-raised)] flex justify-between items-center">
+        <h3 class="text-sm font-bold text-[var(--color-text)] font-display uppercase">Select Color</h3>
+        <button onclick={closeColorPicker} class="text-[var(--color-text-muted)] hover:text-[var(--color-danger)]">
+            <span class="material-symbols-outlined font-bold">close</span>
+        </button>
       </div>
       
       <div class="p-4">
+        <p class="text-xs text-[var(--color-text-muted)] font-mono mb-3 uppercase">Target: {colorPickerCategory}</p>
+        
         <!-- Color Grid -->
         <div class="grid grid-cols-6 gap-2 mb-4">
           {#each presetColors as color}
             <button
               onclick={() => selectedColor = color}
-              class="h-8 w-8 rounded-full border-2 transition-transform hover:scale-110 {selectedColor === color ? 'border-white ring-2 ring-white/30' : 'border-transparent'}"
-              style="background-color: {color}"
+              class="h-8 w-8 border-2 transition-transform hover:scale-110 {selectedColor === color ? 'border-[var(--color-text)]' : 'border-transparent'}"
+              style="background-color: {color}; box-shadow: 2px 2px 0 0 rgba(0,0,0,0.2);"
               aria-label="Select color {color}"
             ></button>
           {/each}
         </div>
         
         <!-- Custom Color Input -->
-        <div class="flex items-center gap-2">
-          <label for="custom-color-picker" class="text-sm text-text-muted">Custom:</label>
+        <div class="flex items-center gap-2 bg-[var(--color-bg)] p-2 border-2 border-[var(--color-border)] shadow-inner">
           <input
-            id="custom-color-picker"
             type="color"
             bind:value={selectedColor}
-            class="h-8 w-12 rounded cursor-pointer bg-transparent border-0"
+            class="h-6 w-6 cursor-pointer border-none bg-transparent p-0"
           />
           <input
             type="text"
             bind:value={selectedColor}
-            class="flex-1 px-2 py-1 text-sm rounded bg-bg-dark border border-border-dark text-white uppercase"
+            class="flex-1 bg-transparent border-none text-[var(--color-text)] font-mono text-sm uppercase focus:outline-none"
             maxlength="7"
           />
         </div>
       </div>
       
-      <div class="p-4 border-t border-border-dark flex justify-end gap-2">
-        <button
-          onclick={closeColorPicker}
-          class="px-4 py-2 text-sm rounded-lg text-text-secondary hover:text-white transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          onclick={applyColor}
-          class="px-4 py-2 text-sm rounded-lg bg-primary text-white hover:bg-primary-hover transition-colors"
-        >
-          Apply
-        </button>
+      <div class="p-3 border-t-2 border-[var(--color-border)] flex justify-end gap-2 bg-[var(--color-surface-raised)]">
+        <PixelButton variant="ghost" onclick={closeColorPicker}>Cancel</PixelButton>
+        <PixelButton variant="primary" onclick={applyColor}>Apply</PixelButton>
       </div>
     </div>
   </div>

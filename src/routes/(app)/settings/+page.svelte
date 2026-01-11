@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { Header } from '$lib/components/layout';
-  import { Card, Button, Input } from '$lib/components/ui';
+  import { IsometricCard, PixelButton, Input } from '$lib/components/ui';
   import { authClient } from '$lib/auth-client';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
-  
+  import { updateCurrency, subscribeToCurrency } from '$lib/stores/currency-store';
+  import { setAppTheme } from '$lib/stores/app-store.svelte';
+
   interface Props {
     data: {
       user: {
@@ -15,238 +16,173 @@
       } | null;
     };
   }
-  
+
   let { data }: Props = $props();
-  
-  // Use $derived for values from props to maintain reactivity
+
   const userEmail = $derived(data.user?.email || '');
-  
-  let name = $state('');
-  let profileImage = $state<string | null>(null);
-  let imagePreview = $state<string | null>(null);
+
+  import { untrack } from 'svelte';
+
+  let name = $state(untrack(() => data.user?.name || ''));
+  let profileImage = $state<string | null>(untrack(() => data.user?.image || null));
+  let imagePreview = $state<string | null>(untrack(() => data.user?.image || null));
   let uploadInProgress = $state(false);
   let showImageMenu = $state(false);
 
-  // Profile image removal confirmation
   let showRemoveImageConfirm = $state(false);
   let removingImage = $state(false);
   let removeImageError = $state('');
 
-  $effect.pre(() => {
-    name = data.user?.name || '';
-    profileImage = data.user?.image || null;
-    imagePreview = data.user?.image || null;
-  });
+  // No longer need effect.pre for initialization as we use untrack in $state
+  
   let currency = $state('MYR');
   let theme = $state('dark');
   let notifications = $state(true);
-  let currencyLoading = $state(false); // Track currency conversion loading
-  let githubLinking = $state(false);
-  // GitHub status - fetched directly from API, not from SvelteKit data
+  let preferencesInitialized = $state(false);
+
   let githubLinked = $state(false);
   let githubLoading = $state(true);
   let linkError = $state('');
   let linkSuccess = $state('');
   
-  // Fetch GitHub status from API on mount and after navigation
   async function fetchGitHubStatus() {
     githubLoading = true;
     try {
-      const response = await fetch('/api/github-status', {
-        credentials: 'include'
-      });
+      const response = await fetch('/api/github-status', { credentials: 'include' });
       const result = await response.json();
       githubLinked = result.linked || false;
-      console.log('[Settings] GitHub status fetched:', result);
     } catch (err) {
-      console.error('[Settings] Failed to fetch GitHub status:', err);
       githubLinked = false;
     } finally {
       githubLoading = false;
     }
   }
   
-  // Fetch user preferences from API
   async function fetchPreferences() {
     try {
-      const response = await fetch('/api/preferences', {
-        credentials: 'include'
-      });
+      const response = await fetch('/api/preferences', { credentials: 'include' });
       const result = await response.json();
       if (result.preferences) {
-        currency = result.preferences.currency || 'MYR';
-        theme = result.preferences.theme || 'dark';
-        notifications = result.preferences.notifications ?? true;
-        console.log('[Settings] Preferences loaded:', result.preferences);
+        // Use untrack to prevent triggering the auto-save effect during initial fetch
+        untrack(() => {
+            currency = result.preferences.currency || 'MYR';
+            theme = result.preferences.theme || 'dark';
+            notifications = result.preferences.notifications ?? true;
+            preferencesInitialized = true;
+        });
       }
     } catch (err) {
       console.error('[Settings] Failed to load preferences:', err);
     }
   }
   
-  // Save preferences to API
   async function savePreferences() {
-    try {
-      // Show loading if currency changed
-      const oldCurrency = linkSuccess.includes('converting') ? currency : null;
+    if (!preferencesInitialized) return;
 
+    try {
       const response = await fetch('/api/preferences', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ currency, theme, notifications })
       });
-
       const result = await response.json();
-
       if (result.success) {
-        // If currency was changed, show success message
+        await updateCurrency(currency as any);
         if (result.preferences.currency !== currency) {
-          linkSuccess = `Currency converted from ${result.preferences.currency} to ${currency}`;
+          linkSuccess = `Currency converted!`;
           setTimeout(() => linkSuccess = '', 3000);
         }
       }
-
-      console.log('[Settings] Preferences saved');
     } catch (err) {
       console.error('[Settings] Failed to save preferences:', err);
     }
   }
 
-  // Fetch on mount
   onMount(() => {
     fetchGitHubStatus();
     fetchPreferences();
     fetchTwoFactorStatus();
   });
 
-  // PERFORMANCE: Debounced auto-save to avoid excessive API calls
   let saveTimeout: ReturnType<typeof setTimeout> | null = null;
-
   $effect(() => {
-    // Track changes to save
+    // Watch these values
     const _ = currency + theme + notifications.toString();
-    // Only save if not the initial load
-    if (typeof window !== 'undefined') {
-      // Clear existing timeout
+    
+    if (typeof window !== 'undefined' && preferencesInitialized) {
       if (saveTimeout) clearTimeout(saveTimeout);
-      // Debounce save by 500ms
-      saveTimeout = setTimeout(() => {
-        savePreferences();
-      }, 500);
+      saveTimeout = setTimeout(() => { 
+        untrack(() => savePreferences()); 
+      }, 800);
+    }
+  });
+
+  // Apply theme instantly
+  $effect(() => {
+    if (preferencesInitialized) {
+      setAppTheme(theme);
     }
   });
   
-  // Check URL params for link result
   $effect(() => {
     const success = $page.url.searchParams.get('success');
     const error = $page.url.searchParams.get('error');
     const message = $page.url.searchParams.get('message');
     
-    if (success === 'linked') {
-      linkSuccess = 'GitHub account linked successfully!';
-      githubLinked = true;
-      goto('/settings', { replaceState: true });
-    } else if (success === 'already_linked') {
-      linkSuccess = 'GitHub account is already linked.';
+    if (success === 'linked' || success === 'already_linked') {
+      linkSuccess = 'GitHub linked successfully!';
       githubLinked = true;
       goto('/settings', { replaceState: true });
     } else if (error === 'link_failed') {
-      linkError = message ? decodeURIComponent(message) : 'Failed to link GitHub account';
+      linkError = message ? decodeURIComponent(message) : 'Failed to link GitHub';
       goto('/settings', { replaceState: true });
     }
   });
   
-  const currencies = [
+  const currencies_list = [
     { code: 'MYR', name: 'Malaysian Ringgit' },
     { code: 'SGD', name: 'Singapore Dollar' },
     { code: 'USD', name: 'US Dollar' }
   ];
   
   async function linkGitHub() {
-    console.log("Initiating GitHub link via unified endpoint...");
-    githubLinking = true;
-    linkError = '';
-    
-    // Redirect to unified GitHub OAuth endpoint in link mode
     window.location.href = '/api/github-oauth?mode=link&callbackURL=' + encodeURIComponent(window.location.pathname);
   }
   
   async function unlinkGitHub() {
-    console.log("Initiating GitHub unlink...");
-    linkError = '';
-    linkSuccess = '';
-
     try {
-      const response = await fetch('/api/github-unlink', {
-        method: 'DELETE',
-        credentials: 'include'
-      });
-
+      const response = await fetch('/api/github-unlink', { method: 'DELETE', credentials: 'include' });
       const result = await response.json();
-
       if (result.success) {
-        linkSuccess = 'GitHub account unlinked successfully!';
+        linkSuccess = 'GitHub unlinked successfully!';
         githubLinked = false;
-        console.log('[Settings] GitHub unlinked successfully');
-      } else {
-        throw new Error(result.error || 'Failed to unlink');
       }
     } catch (err: any) {
-      console.error('[Settings] Unlink failed:', err);
-      linkError = err.message || 'Failed to unlink GitHub account';
+      linkError = err.message || 'Failed to unlink GitHub';
     }
   }
 
-  // Profile image upload functions
   let fileInput: HTMLInputElement;
+  function triggerFileInput() { fileInput.click(); }
 
-  function triggerFileInput() {
-    fileInput.click();
-  }
-
-  // Resize image on client-side before upload to reduce file size
   function resizeImage(file: File, maxWidth: number = 200, maxHeight: number = 200, quality: number = 0.8): Promise<Blob> {
     return new Promise((resolve, reject) => {
       const img = new Image();
       const reader = new FileReader();
-
-      reader.onload = (e) => {
-        img.src = e.target?.result as string;
-      };
-
+      reader.onload = (e) => { img.src = e.target?.result as string; };
       img.onload = () => {
-        // Calculate new dimensions (square crop)
         const size = Math.min(maxWidth, maxHeight);
         const canvas = document.createElement('canvas');
-        canvas.width = size;
-        canvas.height = size;
+        canvas.width = size; canvas.height = size;
         const ctx = canvas.getContext('2d');
-
-        if (!ctx) {
-          reject(new Error('Failed to get canvas context'));
-          return;
-        }
-
-        // Calculate crop to center
+        if (!ctx) { reject(new Error('Canvas error')); return; }
         const sourceSize = Math.min(img.width, img.height);
         const sourceX = (img.width - sourceSize) / 2;
         const sourceY = (img.height - sourceSize) / 2;
-
-        // Draw image cropped to square
         ctx.drawImage(img, sourceX, sourceY, sourceSize, sourceSize, 0, 0, size, size);
-
-        // Convert to blob
-        canvas.toBlob((blob) => {
-          if (blob) {
-            resolve(blob);
-          } else {
-            reject(new Error('Failed to create blob'));
-          }
-        }, 'image/jpeg', quality);
+        canvas.toBlob((blob) => { if (blob) resolve(blob); else reject(new Error('Blob error')); }, 'image/jpeg', quality);
       };
-
-      img.onerror = () => reject(new Error('Failed to load image'));
       reader.readAsDataURL(file);
     });
   }
@@ -255,179 +191,81 @@
     const target = event.target as HTMLInputElement;
     const file = target.files?.[0];
     if (!file) return;
-
-    // Validate file type
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-    if (!allowedTypes.includes(file.type)) {
-      alert('Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.');
-      return;
-    }
-
-    // Validate file size (max 5MB for initial file - we'll resize it)
-    const maxSize = 5 * 1024 * 1024;
-    if (file.size > maxSize) {
-      alert('File too large. Maximum size is 5MB.');
-      return;
-    }
-
     uploadInProgress = true;
-
     try {
-      // Resize image to 200x200 with 80% quality
       const resizedBlob = await resizeImage(file, 200, 200, 0.8);
-      console.log('[Settings] Original size:', file.size, 'Resized size:', resizedBlob.size);
-
-      // Create preview from resized blob
-      const previewReader = new FileReader();
-      previewReader.onload = (e) => {
-        imagePreview = e.target?.result as string;
-      };
-      previewReader.readAsDataURL(resizedBlob);
-
-      // Upload resized image
       const formData = new FormData();
       formData.append('image', resizedBlob, 'profile.jpg');
-
-      const response = await fetch('/api/user/image', {
-        method: 'POST',
-        credentials: 'include',
-        body: formData
-      });
-
+      const response = await fetch('/api/user/image', { method: 'POST', credentials: 'include', body: formData });
       const result = await response.json();
-
       if (result.success) {
         profileImage = result.image;
-        // Show success feedback
-        linkSuccess = 'Profile image updated successfully!';
+        imagePreview = result.image;
+        linkSuccess = 'Image updated!';
         setTimeout(() => linkSuccess = '', 3000);
-      } else {
-        throw new Error(result.details || result.error || 'Failed to upload image');
       }
     } catch (err: any) {
-      console.error('[Settings] Image upload failed:', err);
-      alert(err.message || 'Failed to upload image. Please try again.');
-      // Reset preview on error
-      imagePreview = profileImage;
+      alert('Upload failed');
     } finally {
       uploadInProgress = false;
-      // Reset file input
-      target.value = '';
     }
-  }
-
-  async function removeImage() {
-    if (!profileImage) return;
-    // Show confirmation modal instead of browser confirm
-    showRemoveImageConfirm = true;
-    showImageMenu = false;
   }
 
   async function confirmRemoveImage() {
     removingImage = true;
-    removeImageError = '';
     try {
-      const response = await fetch('/api/user/image', {
-        method: 'DELETE',
-        credentials: 'include'
-      });
-
+      const response = await fetch('/api/user/image', { method: 'DELETE', credentials: 'include' });
       const result = await response.json();
-
       if (result.success) {
-        profileImage = null;
-        imagePreview = null;
-        linkSuccess = 'Profile image removed successfully!';
+        profileImage = null; imagePreview = null;
+        linkSuccess = 'Image removed!';
         setTimeout(() => linkSuccess = '', 3000);
         showRemoveImageConfirm = false;
-      } else {
-        throw new Error(result.error || 'Failed to remove image');
       }
-    } catch (err: any) {
-      console.error('[Settings] Image removal failed:', err);
-      removeImageError = err.message || 'Failed to remove image. Please try again.';
     } finally {
       removingImage = false;
     }
   }
 
-  function cancelRemoveImage() {
-    showRemoveImageConfirm = false;
-    removeImageError = '';
-  }
+  function toggleImageMenu() { showImageMenu = !showImageMenu; }
+  function closeImageMenu() { showImageMenu = false; }
 
-  function toggleImageMenu() {
-    showImageMenu = !showImageMenu;
-  }
-
-  function closeImageMenu() {
-    showImageMenu = false;
-  }
-
-  // ===== Two-Factor Authentication (2FA) =====
+  // 2FA Logic
   let twoFactorEnabled = $state(false);
   let twoFactorLoading = $state(true);
   let showTwoFactorSetup = $state(false);
   let showDisableTwoFactor = $state(false);
-
-  // Setup state
   let qrCodeUrl = $state('');
   let setupSecret = $state('');
   let verifyCode = $state('');
   let setupStep = $state<'scan' | 'verify' | 'backup'>('scan');
   let backupCodes = $state<string[]>([]);
-
-  // Disable state
   let disableCode = $state('');
   let disableMethod = $state<'totp' | 'backup'>('totp');
 
-  // Fetch 2FA status
   async function fetchTwoFactorStatus() {
     twoFactorLoading = true;
     try {
-      const response = await fetch('/api/2fa', {
-        credentials: 'include'
-      });
+      const response = await fetch('/api/2fa', { credentials: 'include' });
       const result = await response.json();
       twoFactorEnabled = result.enabled || false;
-      console.log('[Settings] 2FA status:', twoFactorEnabled);
-    } catch (err) {
-      console.error('[Settings] Failed to fetch 2FA status:', err);
     } finally {
       twoFactorLoading = false;
     }
   }
 
-  // Setup 2FA - Generate QR code
   async function setupTwoFactor() {
     try {
-      const response = await fetch('/api/2fa', {
-        method: 'POST',
-        credentials: 'include'
-      });
+      const response = await fetch('/api/2fa', { method: 'POST', credentials: 'include' });
       const result = await response.json();
-
       if (result.qrCode) {
-        qrCodeUrl = result.qrCode;
-        setupSecret = result.secret;
-        setupStep = 'scan';
-        showTwoFactorSetup = true;
-      } else {
-        throw new Error(result.error || 'Failed to setup 2FA');
+        qrCodeUrl = result.qrCode; setupSecret = result.secret;
+        setupStep = 'scan'; showTwoFactorSetup = true;
       }
-    } catch (err: any) {
-      console.error('[Settings] 2FA setup error:', err);
-      alert(err.message || 'Failed to setup 2FA');
-    }
+    } catch (err: any) { alert('2FA Setup Error'); }
   }
 
-  // Verify and enable 2FA
   async function enableTwoFactor() {
-    if (!verifyCode || verifyCode.length !== 6) {
-      alert('Please enter a valid 6-digit code');
-      return;
-    }
-
     try {
       const response = await fetch('/api/2fa', {
         method: 'PUT',
@@ -436,46 +274,14 @@
         body: JSON.stringify({ code: verifyCode })
       });
       const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || 'Failed to enable 2FA');
-      }
-
       if (result.success) {
         backupCodes = result.backupCodes || [];
-        setupStep = 'backup';
-        twoFactorEnabled = true;
+        setupStep = 'backup'; twoFactorEnabled = true;
       }
-    } catch (err: any) {
-      console.error('[Settings] 2FA enable error:', err);
-      alert(err.message || 'Failed to enable 2FA');
-    }
+    } catch (err: any) { alert('Verify Error'); }
   }
 
-  // Cancel 2FA setup
-  function cancelTwoFactorSetup() {
-    showTwoFactorSetup = false;
-    qrCodeUrl = '';
-    setupSecret = '';
-    verifyCode = '';
-    setupStep = 'scan';
-    backupCodes = [];
-  }
-
-  // Show disable 2FA dialog
-  function openDisableTwoFactor() {
-    showDisableTwoFactor = true;
-    disableCode = '';
-    disableMethod = 'totp';
-  }
-
-  // Disable 2FA
   async function disableTwoFactor() {
-    if (!disableCode) {
-      alert('Please enter a code');
-      return;
-    }
-
     try {
       const response = await fetch('/api/2fa', {
         method: 'DELETE',
@@ -487,30 +293,13 @@
         })
       });
       const result = await response.json();
-
       if (result.success) {
-        twoFactorEnabled = false;
-        showDisableTwoFactor = false;
-        disableCode = '';
-        linkSuccess = '2FA disabled successfully';
-        setTimeout(() => linkSuccess = '', 3000);
-      } else {
-        throw new Error(result.error || 'Failed to disable 2FA');
+        twoFactorEnabled = false; showDisableTwoFactor = false;
+        linkSuccess = '2FA disabled'; setTimeout(() => linkSuccess = '', 3000);
       }
-    } catch (err: any) {
-      console.error('[Settings] 2FA disable error:', err);
-      alert(err.message || 'Failed to disable 2FA');
-    }
+    } catch (err: any) { alert('Disable Error'); }
   }
 
-  // Copy backup code
-  function copyBackupCode(code: string) {
-    navigator.clipboard.writeText(code);
-    linkSuccess = 'Code copied!';
-    setTimeout(() => linkSuccess = '', 2000);
-  }
-
-  // ===== Delete Account =====
   let showDeleteAccount = $state(false);
   let deleteStep = $state<'confirm' | 'password' | 'final'>('confirm');
   let deletePassword = $state('');
@@ -518,44 +307,24 @@
   let deleteLoading = $state(false);
   let deleteError = $state('');
 
-  function openDeleteAccount() {
-    showDeleteAccount = true;
-    deleteStep = 'confirm';
-    deletePassword = '';
-    deleteConfirmed = false;
-    deleteError = '';
-  }
-
-  function closeDeleteAccount() {
-    showDeleteAccount = false;
-    deleteStep = 'confirm';
-    deletePassword = '';
-    deleteConfirmed = false;
-    deleteError = '';
+  function closeDeleteAccount() { 
+    showDeleteAccount = false; 
+    deleteStep = 'confirm'; 
+    deletePassword = ''; 
+    deleteError = ''; 
+    deleteConfirmed = false; 
   }
 
   async function proceedToDelete() {
-    deleteError = '';
-    if (deleteStep === 'confirm') {
-      deleteStep = 'password';
-    } else if (deleteStep === 'password') {
-      if (!deletePassword) {
-        deleteError = 'Please enter your password';
-        return;
-      }
+    if (deleteStep === 'confirm') deleteStep = 'password';
+    else if (deleteStep === 'password') {
+      if (!deletePassword) { deleteError = 'PASSWORD_REQUIRED'; return; }
       deleteStep = 'final';
     }
   }
 
   async function confirmDeleteAccount() {
-    if (!deleteConfirmed) {
-      deleteError = 'Please confirm that you want to delete your account';
-      return;
-    }
-
     deleteLoading = true;
-    deleteError = '';
-
     try {
       const response = await fetch('/api/delete-account', {
         method: 'DELETE',
@@ -563,21 +332,10 @@
         credentials: 'include',
         body: JSON.stringify({ password: deletePassword })
       });
-
       const result = await response.json();
-
-      if (result.success) {
-        // Redirect to home after successful deletion
-        window.location.href = '/?accountDeleted=true';
-      } else {
-        throw new Error(result.error || 'Failed to delete account');
-      }
-    } catch (err: any) {
-      console.error('[Settings] Delete account error:', err);
-      deleteError = err.message || 'Failed to delete account';
-    } finally {
-      deleteLoading = false;
-    }
+      if (result.success) window.location.href = '/?accountDeleted=true';
+    } catch (err: any) { deleteError = err.message; }
+    finally { deleteLoading = false; }
   }
 </script>
 
@@ -585,579 +343,317 @@
   <title>Settings - MoneyKracked</title>
 </svelte:head>
 
-<div class="min-h-screen bg-bg-dark p-4 md:p-6 lg:p-8">
-  <Header title="Settings" subtitle="Manage your account and preferences" />
-
-  <div class="space-y-6 mt-6">
-    <!-- Profile Section -->
-    <Card padding="lg">
-      <h3 class="text-lg font-bold text-white mb-6">Profile</h3>
-      
-      <div class="flex items-center gap-6 mb-6">
-        <!-- Profile Photo -->
-        <div class="relative">
-          <div class="w-20 h-20 rounded-full bg-gradient-to-br from-primary to-primary-600 flex items-center justify-center text-2xl font-bold text-white overflow-hidden">
-            {#if imagePreview}
-              <img src={imagePreview} alt={data.user?.name || 'User'} class="w-full h-full object-cover" />
-            {:else}
-              {(data.user?.name || 'U').charAt(0).toUpperCase()}
-            {/if}
-          </div>
-          <button
-            onclick={toggleImageMenu}
-            class="absolute bottom-0 right-0 p-1.5 bg-surface-dark rounded-full border border-border-dark hover:bg-bg-dark transition-colors"
-            disabled={uploadInProgress}
-          >
-            {#if uploadInProgress}
-              <span class="material-symbols-outlined text-sm text-primary animate-spin">sync</span>
-            {:else}
-              <span class="material-symbols-outlined text-sm text-text-secondary">edit</span>
-            {/if}
-          </button>
-
-          <!-- Image Action Menu -->
-          {#if showImageMenu}
-            <div class="absolute top-full left-0 mt-2 bg-surface-dark border border-border-dark rounded-lg shadow-xl overflow-hidden min-w-[140px] z-[60]">
-              <button
-                onclick={triggerFileInput}
-                class="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-secondary hover:text-white hover:bg-border-dark transition-colors text-left"
-              >
-                <span class="material-symbols-outlined text-lg">upload</span>
-                <span>Upload Photo</span>
-              </button>
-              {#if profileImage}
-                <button
-                  onclick={removeImage}
-                  class="w-full flex items-center gap-2 px-3 py-2 text-sm text-danger hover:bg-danger/10 transition-colors text-left"
-                >
-                  <span class="material-symbols-outlined text-lg">delete</span>
-                  <span>Remove Photo</span>
-                </button>
-              {/if}
-            </div>
-          {/if}
-
-          <!-- Hidden file input -->
-          <input
-            type="file"
-            bind:this={fileInput}
-            accept="image/jpeg,image/jpg,image/png,image/gif,image/webp"
-            onchange={handleFileSelect}
-            class="hidden"
-          />
-        </div>
-        
+<div class="flex h-[calc(100%+2rem)] lg:h-[calc(100%+4rem)] w-[calc(100%+4rem)] overflow-hidden bg-[var(--color-bg)] -m-4 lg:-m-8 border-black">
+  <!-- Main Settings Column -->
+  <div class="flex-1 flex flex-col min-w-0 h-full relative bg-[var(--color-bg)]">
+    <!-- App-like Inline Header -->
+    <header class="h-20 flex items-center justify-between px-6 lg:px-10 border-b-4 border-black bg-[var(--color-surface-raised)] flex-shrink-0 z-20 shadow-lg">
+      <div class="flex items-center gap-4">
         <div>
-          <h4 class="text-lg font-semibold text-white">{data.user?.name || 'User'}</h4>
-          <p class="text-text-muted">{userEmail}</p>
-        </div>
-      </div>
-      
-      <div class="grid gap-4 md:grid-cols-2">
-        <Input label="Full Name" bind:value={name} placeholder="Enter your name" />
-        <Input label="Email" value={userEmail} disabled />
-      </div>
-      
-      <div class="mt-4 flex justify-end">
-        <Button>Save Changes</Button>
-      </div>
-    </Card>
-    
-    <!-- Connected Accounts -->
-    <Card padding="lg">
-      <h3 class="text-lg font-bold text-white mb-6">Connected Accounts</h3>
-      
-      {#if linkError}
-        <div class="mb-4 p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm">
-          {linkError}
-        </div>
-      {/if}
-      
-      {#if linkSuccess}
-        <div class="mb-4 p-3 bg-success/10 border border-success/30 rounded-lg text-success text-sm">
-          {linkSuccess}
-        </div>
-      {/if}
-      
-      <div class="flex items-center justify-between p-4 bg-bg-dark rounded-lg border border-border-dark">
-        <div class="flex items-center gap-4">
-          <svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-          </svg>
-          <div>
-            <p class="font-medium text-white">GitHub</p>
-            <p class="text-xs text-text-muted">
-              {#if githubLoading}
-                Checking...
-              {:else if githubLinked}
-                Connected
-              {:else}
-                Not connected
-              {/if}
-            </p>
-          </div>
-        </div>
-        
-        {#if githubLoading}
-          <Button variant="secondary" size="sm" disabled>
-            Loading...
-          </Button>
-        {:else if githubLinked}
-          <Button variant="danger" size="sm" onclick={unlinkGitHub}>
-            Unlink
-          </Button>
-        {:else}
-          <Button variant="secondary" size="sm" loading={githubLinking} onclick={linkGitHub}>
-            Link Account
-          </Button>
-        {/if}
-      </div>
-    </Card>
-    
-    <!-- Preferences -->
-    <Card padding="lg">
-      <h3 class="text-lg font-bold text-white mb-6">Preferences</h3>
-      
-      <div class="space-y-6">
-        <!-- Currency -->
-        <div class="flex items-center justify-between">
-          <div>
-            <p class="font-medium text-white">Default Currency</p>
-            <p class="text-sm text-text-muted">Used for all transactions</p>
-          </div>
-          <select 
-            bind:value={currency}
-            class="bg-bg-dark border border-border-dark rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-primary"
-          >
-            {#each currencies as curr}
-              <option value={curr.code}>{curr.code} - {curr.name}</option>
-            {/each}
-          </select>
-        </div>
-        
-        <!-- Theme -->
-        <div class="flex items-center justify-between">
-          <div>
-            <p class="font-medium text-white">Theme</p>
-            <p class="text-sm text-text-muted">Choose your preferred theme</p>
-          </div>
-          <select 
-            bind:value={theme}
-            class="bg-bg-dark border border-border-dark rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-primary"
-          >
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-            <option value="system">System</option>
-          </select>
-        </div>
-        
-        <!-- Notifications -->
-        <div class="flex items-center justify-between">
-          <div>
-            <p class="font-medium text-white">Notifications</p>
-            <p class="text-sm text-text-muted">Receive budget alerts and tips</p>
-          </div>
-          <label class="relative inline-flex items-center cursor-pointer">
-            <input type="checkbox" bind:checked={notifications} class="sr-only peer" />
-            <div class="w-11 h-6 bg-bg-dark peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all border border-border-dark peer-checked:bg-primary"></div>
-          </label>
-        </div>
-      </div>
-    </Card>
-
-    <!-- Two-Factor Authentication -->
-    <Card padding="lg">
-      <div class="flex items-center justify-between mb-6">
-        <div>
-          <h3 class="text-lg font-bold text-white">Two-Factor Authentication</h3>
-          <p class="text-sm text-text-muted">Add an extra layer of security to your account</p>
-        </div>
-        {#if twoFactorLoading}
-          <div class="animate-spin rounded-full h-5 w-5 border-2 border-primary border-t-transparent"></div>
-        {:else if twoFactorEnabled}
-          <span class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-success/20 text-success text-sm font-medium">
-            <span class="material-symbols-outlined text-sm">check_circle</span>
-            Enabled
-          </span>
-        {:else}
-          <span class="flex items-center gap-1.5 px-3 py-1 rounded-full bg-text-muted/20 text-text-muted text-sm font-medium">
-            <span class="material-symbols-outlined text-sm">cancel</span>
-            Disabled
-          </span>
-        {/if}
-      </div>
-
-      {#if twoFactorEnabled}
-        <div class="p-4 bg-bg-dark rounded-lg border border-border-dark">
-          <p class="text-sm text-text-muted mb-4">
-            Your account is protected with two-factor authentication. You'll need to enter a code from your authenticator app when logging in.
+          <h2 class="text-xl font-display text-[var(--color-primary)]">SYSTEM <span class="text-[var(--color-text)]">SETTINGS</span></h2>
+          <p class="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
+            <span class="flex h-2 w-2 rounded-full bg-[var(--color-primary)] animate-pulse"></span>
+            Configuration & Profile
           </p>
-          <div class="flex gap-3">
-            <Button variant="danger" onclick={openDisableTwoFactor}>Disable 2FA</Button>
-          </div>
         </div>
-      {:else}
-        <div class="p-4 bg-bg-dark rounded-lg border border-border-dark">
-          <div class="flex items-start gap-4">
-            <div class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/20 text-primary flex-shrink-0">
-              <span class="material-symbols-outlined">security</span>
-            </div>
-            <div class="flex-1">
-              <h4 class="font-medium text-white mb-1">Protect your account</h4>
-              <p class="text-sm text-text-muted mb-4">
-                Use an authenticator app like Google Authenticator, Authy, or Microsoft Authenticator to generate verification codes.
-              </p>
-              <Button onclick={setupTwoFactor}>Enable Two-Factor Authentication</Button>
-            </div>
-          </div>
+      </div>
+    </header>
+
+    <!-- Scrollable Content Area -->
+    <div class="flex-1 overflow-y-auto p-6 lg:p-10 space-y-8 scroll-smooth custom-scrollbar">
+    <!-- Profile & Notifications -->
+    {#if linkError || linkSuccess}
+        <div class="px-4 py-3 border-4 border-black font-mono text-xs uppercase
+            {linkError ? 'bg-[var(--color-danger)] text-black' : 'bg-[var(--color-primary)] text-black'}">
+            {linkError || linkSuccess}
         </div>
-      {/if}
-    </Card>
+    {/if}
+
+    <IsometricCard title="Your Profile">
+        <div class="flex flex-col md:flex-row gap-8 items-center md:items-start p-2">
+            <div class="relative">
+                <div class="w-32 h-32 border-4 border-black bg-[var(--color-surface-raised)] flex items-center justify-center overflow-hidden shadow-[4px_4px_0px_0px_var(--color-shadow)]">
+                    {#if imagePreview}
+                        <img src={imagePreview} alt="User" class="w-full h-full object-cover pixelated" />
+                    {:else}
+                        <span class="text-4xl font-display text-[var(--color-text-muted)]">{(data.user?.name || '?').charAt(0)}</span>
+                    {/if}
+                    {#if uploadInProgress}
+                        <div class="absolute inset-0 bg-black/50 flex items-center justify-center">
+                            <div class="animate-spin h-8 w-8 border-4 border-[var(--color-primary)] border-t-transparent"></div>
+                        </div>
+                    {/if}
+                </div>
+                <button 
+                    onclick={toggleImageMenu}
+                    class="absolute -bottom-2 -right-2 w-10 h-10 bg-[var(--color-primary)] border-4 border-black shadow-[2px_2px_0px_0px_var(--color-shadow)] flex items-center justify-center active:translate-y-0.5 active:shadow-none transition-all"
+                >
+                    <span class="material-symbols-outlined text-black">photo_camera</span>
+                </button>
+
+                {#if showImageMenu}
+                    <div class="absolute top-full right-0 mt-4 w-48 bg-[var(--color-surface)] border-4 border-black shadow-[4px_4px_0px_0px_var(--color-shadow)] z-10 overflow-hidden">
+                        <button onclick={triggerFileInput} class="w-full p-3 text-left font-mono text-xs uppercase hover:bg-[var(--color-surface-raised)] flex items-center gap-2">
+                             <span class="material-symbols-outlined text-sm">upload</span> Upload New
+                        </button>
+                        {#if profileImage}
+                            <button onclick={() => { showRemoveImageConfirm = true; showImageMenu = false; }} class="w-full p-3 text-left font-mono text-xs uppercase text-[var(--color-danger)] hover:bg-[var(--color-surface-raised)] flex items-center gap-2">
+                                <span class="material-symbols-outlined text-sm">delete</span> Delete Photo
+                            </button>
+                        {/if}
+                    </div>
+                {/if}
+                <input type="file" bind:this={fileInput} onchange={handleFileSelect} class="hidden" accept="image/*" />
+            </div>
+
+            <div class="flex-1 w-full space-y-4">
+                <Input label="Display Name" bind:value={name} placeholder="Enter your name" />
+                <Input label="Email Address" value={userEmail} disabled />
+                <div class="flex justify-end pt-2">
+                   <PixelButton variant="primary">Save Changes</PixelButton>
+                </div>
+            </div>
+        </div>
+    </IsometricCard>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Preferences -->
+        <IsometricCard title="Preferences">
+            <div class="space-y-6 p-2">
+                <div class="space-y-2">
+                    <label for="currency-select" class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest">Default Currency</label>
+                    <div class="relative">
+                        <select id="currency-select" bind:value={currency} class="iso-input appearance-none uppercase text-sm">
+                            {#each currencies_list as curr}
+                                <option value={curr.code}>{curr.code} - {curr.name}</option>
+                            {/each}
+                        </select>
+                        <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">expand_more</span>
+                    </div>
+                </div>
+
+                <div class="space-y-2">
+                    <label for="theme-select" class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest">Visual Theme</label>
+                    <div class="relative">
+                        <select id="theme-select" bind:value={theme} class="iso-input appearance-none uppercase text-sm">
+                            <option value="dark">Dark Theme</option>
+                            <option value="light">Light Theme</option>
+                            <option value="system">Follow System</option>
+                        </select>
+                        <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">expand_more</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between py-2 border-t-2 border-[var(--color-surface-raised)]">
+                    <div>
+                        <p class="text-[10px] font-mono text-[var(--color-text)] uppercase tracking-widest">Notifications</p>
+                        <p class="text-[9px] font-mono text-[var(--color-text-muted)] uppercase mt-1">Budget alerts & tips</p>
+                    </div>
+                    <button 
+                        onclick={() => notifications = !notifications}
+                        aria-label="Toggle Notifications"
+                        class="w-14 h-8 border-4 border-black p-1 transition-all {notifications ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-surface-raised)]'}"
+                    >
+                        <div class="h-full aspect-square bg-black transition-all {notifications ? 'translate-x-6' : 'translate-x-0'}"></div>
+                    </button>
+                </div>
+            </div>
+        </IsometricCard>
+
+        <!-- Connectivity -->
+        <IsometricCard title="Connections">
+            <div class="p-2 space-y-6">
+                <div class="flex items-center justify-between p-3 bg-[var(--color-bg)] border-2 border-black">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-8 h-8 text-[var(--color-text)]" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                        </svg>
+                        <div>
+                            <p class="text-[10px] font-mono uppercase tracking-widest">GitHub</p>
+                            <p class="text-[9px] font-mono uppercase text-[var(--color-text-muted)]">
+                                {githubLoading ? 'Syncing...' : githubLinked ? 'Connected' : 'Not Linked'}
+                            </p>
+                        </div>
+                    </div>
+                    {#if githubLinked}
+                        <PixelButton variant="primary" onclick={unlinkGitHub} class="text-[9px]">Unlink</PixelButton>
+                    {:else}
+                        <PixelButton variant="primary" onclick={linkGitHub} class="text-[9px]">Connect</PixelButton>
+                    {/if}
+                </div>
+
+                <div class="pt-4 border-t-2 border-[var(--color-surface-raised)] space-y-4">
+                    <div class="flex items-center justify-between">
+                         <div>
+                            <p class="text-[10px] font-mono uppercase tracking-widest">Two-Factor Auth</p>
+                            <p class="text-[9px] font-mono uppercase text-[var(--color-text-muted)] mt-1">Extra Security Layer</p>
+                        </div>
+                        <div class="px-2 py-1 bg-black text-[10px] font-mono uppercase {twoFactorEnabled ? 'text-[var(--color-primary)]' : 'text-[var(--color-text-muted)]'}">
+                            {twoFactorEnabled ? 'ENABLED' : 'DISABLED'}
+                        </div>
+                    </div>
+                    
+                    {#if twoFactorEnabled}
+                         <PixelButton variant="danger" class="w-full text-xs" onclick={() => showDisableTwoFactor = true}>
+                            Disable 2FA
+                         </PixelButton>
+                    {:else}
+                         <PixelButton variant="primary" class="w-full text-xs" onclick={setupTwoFactor}>
+                            Enable 2FA
+                         </PixelButton>
+                    {/if}
+                </div>
+            </div>
+        </IsometricCard>
+    </div>
 
     <!-- Danger Zone -->
-    <Card padding="lg">
-      <h3 class="text-lg font-bold text-danger mb-4">Danger Zone</h3>
-      <p class="text-text-muted mb-4">Once you delete your account, there is no going back. Please be certain.</p>
-      <Button variant="danger" onclick={openDeleteAccount}>Delete Account</Button>
-    </Card>
+    <IsometricCard title="Danger Zone" class="!border-[var(--color-danger)] shadow-[var(--spacing-depth)_var(--spacing-depth)_0px_0px_var(--color-danger)]">
+        <div class="p-2 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div>
+                <p class="text-[10px] font-mono text-[var(--color-danger)] uppercase tracking-widest">Delete Account</p>
+                <p class="text-[9px] font-mono text-[var(--color-text-muted)] uppercase mt-1">Erase all data permanently</p>
+            </div>
+            <PixelButton variant="danger" class="text-xs" onclick={() => showDeleteAccount = true}>
+                Terminate Account
+            </PixelButton>
+        </div>
+        </IsometricCard>
+    </div>
   </div>
+
+<!-- Modals -->
+{#if showRemoveImageConfirm}
+    <div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <IsometricCard title="Delete Photo" class="max-w-xs w-full bg-[var(--color-bg)]">
+            <p class="text-xs text-[var(--color-text)] font-mono uppercase text-center mb-6 leading-relaxed">
+                Are you sure you want to remove your photo?
+            </p>
+            <div class="flex gap-3">
+                <PixelButton onclick={() => showRemoveImageConfirm = false} class="flex-1 text-[10px]">Back</PixelButton>
+                <PixelButton variant="danger" onclick={confirmRemoveImage} loading={removingImage} class="flex-1 text-[10px]">Remove</PixelButton>
+            </div>
+        </IsometricCard>
+    </div>
+{/if}
+
+{#if showTwoFactorSetup}
+    <div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <IsometricCard title="Setup 2FA" class="max-w-md w-full bg-[var(--color-bg)]">
+            {#if setupStep === 'scan'}
+                <div class="space-y-4">
+                    <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase text-center">Scan QR code with your auth app</p>
+                    <div class="p-4 bg-white border-4 border-black shadow-[4px_4px_0px_0px_var(--color-shadow)] flex justify-center mx-auto">
+                        <img src={qrCodeUrl} alt="QR" class="w-40 h-40 pixelated" />
+                    </div>
+                    <div class="p-3 bg-[var(--color-surface-raised)] border-2 border-black font-mono text-[10px] uppercase">
+                        <p class="text-[var(--color-text-muted)] mb-1">Manual Key:</p>
+                        <div class="flex justify-between items-center">
+                            <span class="text-white font-bold">{setupSecret}</span>
+                            <button onclick={() => navigator.clipboard.writeText(setupSecret)} class="text-[var(--color-primary)]">Copy</button>
+                        </div>
+                    </div>
+                    <PixelButton variant="primary" class="w-full" onclick={() => setupStep = 'verify'}>Next Step</PixelButton>
+                </div>
+            {:else if setupStep === 'verify'}
+                <div class="space-y-4">
+                    <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase text-center">Enter 6-digit code</p>
+                    <input 
+                        type="text" 
+                        bind:value={verifyCode} 
+                        placeholder="000000" 
+                        class="iso-input text-center text-4xl tracking-widest font-mono" 
+                        maxlength="6"
+                    />
+                    <div class="flex gap-2">
+                        <PixelButton onclick={() => setupStep = 'scan'} class="flex-1">Back</PixelButton>
+                        <PixelButton variant="primary" onclick={enableTwoFactor} class="flex-1">Verify</PixelButton>
+                    </div>
+                </div>
+            {:else}
+                <div class="space-y-4">
+                    <p class="text-[10px] font-mono text-[var(--color-warning)] uppercase text-center tracking-widest">Save Backup Codes</p>
+                    <div class="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto p-1">
+                        {#each backupCodes as code}
+                            <div class="p-2 bg-[var(--color-surface-raised)] border-2 border-black flex justify-between items-center group">
+                                <span class="font-mono text-xs">{code}</span>
+                                <button onclick={() => navigator.clipboard.writeText(code)} class="text-[var(--color-primary)] opacity-0 group-hover:opacity-100">
+                                    <span class="material-symbols-outlined text-sm">content_copy</span>
+                                </button>
+                            </div>
+                        {/each}
+                    </div>
+                    <PixelButton variant="primary" class="w-full" onclick={() => showTwoFactorSetup = false}>Done</PixelButton>
+                </div>
+            {/if}
+        </IsometricCard>
+    </div>
+{/if}
+
+{#if showDisableTwoFactor}
+    <div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <IsometricCard title="Disable 2FA" class="max-w-xs w-full bg-[var(--color-bg)]">
+            <div class="space-y-4">
+                <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase text-center">Enter verification code</p>
+                <div class="flex border-2 border-black p-1 bg-[var(--color-surface-raised)]">
+                    <button class="flex-1 py-1 text-[9px] uppercase font-mono {disableMethod === 'totp' ? 'bg-[var(--color-primary)] text-black' : ''}" onclick={() => disableMethod = 'totp'}>App Code</button>
+                    <button class="flex-1 py-1 text-[9px] uppercase font-mono {disableMethod === 'backup' ? 'bg-[var(--color-primary)] text-black' : ''}" onclick={() => disableMethod = 'backup'}>Backup Key</button>
+                </div>
+                <input type="text" bind:value={disableCode} placeholder="......" class="iso-input text-center font-mono" />
+                <div class="flex gap-2">
+                    <PixelButton onclick={() => showDisableTwoFactor = false} class="flex-1">Back</PixelButton>
+                    <PixelButton variant="danger" onclick={disableTwoFactor} class="flex-1">Disable</PixelButton>
+                </div>
+            </div>
+        </IsometricCard>
+    </div>
+{/if}
+
+{#if showDeleteAccount}
+    <div class="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+        <IsometricCard title="Delete Account" class="max-w-md w-full !border-[var(--color-danger)]">
+            <div class="space-y-4">
+                {#if deleteStep === 'confirm'}
+                    <p class="text-xs font-mono uppercase text-center text-[var(--color-danger)]">All data will be erased. Continue?</p>
+                    <div class="flex gap-2">
+                        <PixelButton class="flex-1" onclick={closeDeleteAccount}>Abort</PixelButton>
+                        <PixelButton variant="danger" class="flex-1" onclick={() => deleteStep = 'password'}>Confirm</PixelButton>
+                    </div>
+                {:else if deleteStep === 'password'}
+                    <p class="text-[10px] font-mono uppercase text-center">Verify your password</p>
+                    <input type="password" bind:value={deletePassword} class="iso-input" />
+                    {#if deleteError}<p class="text-[9px] text-[var(--color-danger)] font-mono uppercase text-center">{deleteError}</p>{/if}
+                    <div class="flex gap-2">
+                        <PixelButton class="flex-1" onclick={closeDeleteAccount}>Back</PixelButton>
+                        <PixelButton variant="danger" class="flex-1" onclick={() => deleteStep = 'final'}>Next</PixelButton>
+                    </div>
+                {:else}
+                    <div class="p-3 border-2 border-black bg-[var(--color-bg)] flex items-start gap-3">
+                         <input id="delete-confirm-check" type="checkbox" bind:checked={deleteConfirmed} class="w-6 h-6 border-4 border-black text-[var(--color-danger)] bg-black" />
+                         <label for="delete-confirm-check" class="text-[10px] font-mono uppercase text-[var(--color-text-muted)]">I agree to delete all my data permanently.</label>
+                    </div>
+                    <div class="flex gap-2">
+                        <PixelButton class="flex-1" onclick={closeDeleteAccount}>Abort</PixelButton>
+                        <PixelButton variant="danger" class="flex-1" disabled={!deleteConfirmed} onclick={confirmDeleteAccount} loading={deleteLoading}>Delete Account</PixelButton>
+                    </div>
+                {/if}
+            </div>
+        </IsometricCard>
+    </div>
+{/if}
 </div>
 
-<!-- Click outside to close image menu -->
-{#if showImageMenu}
-  <div
-    class="fixed inset-0 z-0"
-    role="button"
-    tabindex="-1"
-    aria-label="Close menu"
-    onclick={closeImageMenu}
-    onkeydown={(e) => e.key === 'Escape' && closeImageMenu()}
-  ></div>
-{/if}
-
-<!-- 2FA Setup Modal -->
-{#if showTwoFactorSetup}
-  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
-    <div class="bg-surface-dark rounded-2xl border border-border-dark shadow-2xl max-w-md w-full overflow-hidden">
-      <div class="p-6">
-        <div class="flex items-center justify-between mb-6">
-          <h3 class="text-lg font-bold text-white">Setup Two-Factor Authentication</h3>
-          <button onclick={cancelTwoFactorSetup} class="text-text-muted hover:text-white">
-            <span class="material-symbols-outlined">close</span>
-          </button>
-        </div>
-
-        {#if setupStep === 'scan'}
-          <!-- Step 1: Scan QR Code -->
-          <div class="space-y-4">
-            <p class="text-sm text-text-muted">
-              Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.)
-            </p>
-
-            {#if qrCodeUrl}
-              <div class="flex justify-center p-4 bg-white rounded-lg">
-                <img src={qrCodeUrl} alt="QR Code" class="w-48 h-48" />
-              </div>
-            {/if}
-
-            <div class="p-3 bg-bg-dark rounded-lg border border-border-dark">
-              <p class="text-xs text-text-muted mb-1">Or enter this code manually:</p>
-              <div class="flex items-center justify-between">
-                <code class="text-sm font-mono text-white">{setupSecret}</code>
-                <button onclick={() => copyBackupCode(setupSecret)} class="text-primary hover:text-primary-hover text-sm">
-                  Copy
-                </button>
-              </div>
-            </div>
-
-            <Button class="w-full" onclick={() => setupStep = 'verify'}>
-              Continue
-            </Button>
-          </div>
-
-        {:else if setupStep === 'verify'}
-          <!-- Step 2: Verify Code -->
-          <div class="space-y-4">
-            <p class="text-sm text-text-muted">
-              Enter the 6-digit code from your authenticator app to verify the setup.
-            </p>
-
-            <div>
-              <label for="verify-code" class="block text-sm font-medium text-white mb-2">Verification Code</label>
-              <input
-                id="verify-code"
-                type="text"
-                inputmode="numeric"
-                pattern="[0-9]{6}"
-                maxlength="6"
-                bind:value={verifyCode}
-                placeholder="000000"
-                class="w-full bg-bg-dark border border-border-dark rounded-lg px-4 py-3 text-white text-center text-2xl tracking-widest focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-
-            <div class="flex gap-3">
-              <Button variant="secondary" class="flex-1" onclick={cancelTwoFactorSetup}>
-                Cancel
-              </Button>
-              <Button class="flex-1" onclick={enableTwoFactor}>
-                Verify & Enable
-              </Button>
-            </div>
-          </div>
-
-        {:else if setupStep === 'backup'}
-          <!-- Step 3: Backup Codes -->
-          <div class="space-y-4">
-            <div class="p-4 bg-warning/10 border border-warning/30 rounded-lg">
-              <div class="flex items-start gap-3">
-                <span class="material-symbols-outlined text-warning text-xl">warning</span>
-                <div>
-                  <p class="font-medium text-white">Save these backup codes!</p>
-                  <p class="text-sm text-text-muted">
-                    Store these codes safely. You can use them to access your account if you lose your authenticator device.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div class="p-4 bg-bg-dark rounded-lg border border-border-dark space-y-2 max-h-48 overflow-y-auto">
-              {#each backupCodes as code}
-                <div class="flex items-center justify-between p-2 bg-surface-dark rounded">
-                  <code class="font-mono text-white">{code}</code>
-                  <button onclick={() => copyBackupCode(code)} class="text-primary hover:text-primary-hover">
-                    <span class="material-symbols-outlined text-lg">content_copy</span>
-                  </button>
-                </div>
-              {/each}
-            </div>
-
-            <div class="flex gap-3">
-              <Button variant="secondary" onclick={cancelTwoFactorSetup} class="flex-1">
-                I've Saved My Codes
-              </Button>
-            </div>
-          </div>
-        {/if}
-      </div>
-    </div>
-  </div>
-{/if}
-
-<!-- Disable 2FA Modal -->
-{#if showDisableTwoFactor}
-  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
-    <div class="bg-surface-dark rounded-2xl border border-border-dark shadow-2xl max-w-md w-full">
-      <div class="p-6">
-        <div class="flex items-center justify-between mb-6">
-          <h3 class="text-lg font-bold text-white">Disable Two-Factor Authentication</h3>
-          <button onclick={() => showDisableTwoFactor = false} class="text-text-muted hover:text-white">
-            <span class="material-symbols-outlined">close</span>
-          </button>
-        </div>
-
-        <div class="space-y-4">
-          <p class="text-sm text-text-muted">
-            To disable 2FA, enter a verification code from your authenticator app or use one of your backup codes.
-          </p>
-
-          <!-- Method Toggle -->
-          <div class="flex gap-2 p-1 bg-bg-dark rounded-lg">
-            <button
-              class="flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors {disableMethod === 'totp' ? 'bg-primary text-white' : 'text-text-muted hover:text-white'}"
-              onclick={() => disableMethod = 'totp'}
-            >
-              Authenticator Code
-            </button>
-            <button
-              class="flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors {disableMethod === 'backup' ? 'bg-primary text-white' : 'text-text-muted hover:text-white'}"
-              onclick={() => disableMethod = 'backup'}
-            >
-              Backup Code
-            </button>
-          </div>
-
-          <div>
-            <label for="disable-code" class="block text-sm font-medium text-white mb-2">
-              {disableMethod === 'totp' ? 'Enter 6-digit code' : 'Enter backup code'}
-            </label>
-            <input
-              id="disable-code"
-              type="text"
-              bind:value={disableCode}
-              placeholder={disableMethod === 'totp' ? '000000' : 'XXXXXXXX'}
-              class="w-full bg-bg-dark border border-border-dark rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </div>
-
-          <div class="flex gap-3">
-            <Button variant="secondary" class="flex-1" onclick={() => showDisableTwoFactor = false}>
-              Cancel
-            </Button>
-            <Button variant="danger" class="flex-1" onclick={disableTwoFactor}>
-              Disable 2FA
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
-
-<!-- Delete Account Modal -->
-{#if showDeleteAccount}
-  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70">
-    <div class="bg-surface-dark rounded-2xl border border-border-dark shadow-2xl max-w-md w-full">
-      <div class="p-6">
-        <div class="flex items-center justify-between mb-6">
-          <h3 class="text-lg font-bold text-danger">Delete Account</h3>
-          <button onclick={closeDeleteAccount} class="text-text-muted hover:text-white">
-            <span class="material-symbols-outlined">close</span>
-          </button>
-        </div>
-
-        <div class="space-y-4">
-          {#if deleteStep === 'confirm'}
-            <!-- Step 1: Warning & Confirm -->
-            <div class="space-y-4">
-              <div class="p-4 bg-danger/10 border border-danger/30 rounded-lg">
-                <div class="flex items-start gap-3">
-                  <span class="material-symbols-outlined text-danger text-xl">warning</span>
-                  <div>
-                    <p class="font-medium text-white">This action cannot be undone!</p>
-                    <p class="text-sm text-text-muted mt-1">
-                      All your data including transactions, budgets, goals, and settings will be permanently deleted.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <p class="text-sm text-text-muted">
-                To proceed with deleting your account, you'll need to confirm your identity and password.
-              </p>
-
-              <div class="flex gap-3">
-                <Button variant="secondary" class="flex-1" onclick={closeDeleteAccount}>
-                  Cancel
-                </Button>
-                <Button variant="danger" class="flex-1" onclick={proceedToDelete}>
-                  Continue
-                </Button>
-              </div>
-            </div>
-
-          {:else if deleteStep === 'password'}
-            <!-- Step 2: Enter Password -->
-            <div class="space-y-4">
-              <p class="text-sm text-text-muted">
-                Please enter your password to verify your identity before deleting your account.
-              </p>
-
-              <div>
-                <label for="delete-password" class="block text-sm font-medium text-white mb-2">Password</label>
-                <input
-                  id="delete-password"
-                  type="password"
-                  bind:value={deletePassword}
-                  placeholder="Enter your password"
-                  class="w-full bg-bg-dark border border-border-dark rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-danger"
-                />
-              </div>
-
-              {#if deleteError}
-                <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm">
-                  {deleteError}
-                </div>
-              {/if}
-
-              <div class="flex gap-3">
-                <Button variant="secondary" class="flex-1" onclick={closeDeleteAccount}>
-                  Cancel
-                </Button>
-                <Button variant="danger" class="flex-1" onclick={proceedToDelete}>
-                  Continue
-                </Button>
-              </div>
-            </div>
-
-          {:else if deleteStep === 'final'}
-            <!-- Step 3: Final Confirmation -->
-            <div class="space-y-4">
-              <div class="p-4 bg-danger/10 border border-danger/30 rounded-lg">
-                <p class="font-medium text-danger text-center">Last chance to cancel</p>
-                <p class="text-sm text-text-muted text-center mt-1">
-                  Once you confirm, your account will be permanently deleted.
-                </p>
-              </div>
-
-              <div class="flex items-center gap-3 p-3 bg-bg-dark rounded-lg border border-border-dark">
-                <input
-                  type="checkbox"
-                  bind:checked={deleteConfirmed}
-                  id="delete-confirm"
-                  class="w-5 h-5 rounded border-border-dark text-danger focus:ring-danger"
-                />
-                <label for="delete-confirm" class="text-sm text-white cursor-pointer">
-                  I understand that this action cannot be undone and I want to delete my account
-                </label>
-              </div>
-
-              {#if deleteError}
-                <div class="p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm">
-                  {deleteError}
-                </div>
-              {/if}
-
-              <div class="flex gap-3">
-                <Button variant="secondary" class="flex-1" onclick={closeDeleteAccount} disabled={deleteLoading}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="danger"
-                  class="flex-1"
-                  onclick={confirmDeleteAccount}
-                  disabled={!deleteConfirmed || deleteLoading}
-                  loading={deleteLoading}
-                >
-                  {deleteLoading ? 'Deleting...' : 'Delete My Account'}
-                </Button>
-              </div>
-            </div>
-          {/if}
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
-
-<!-- Remove Profile Image Confirmation Modal -->
-{#if showRemoveImageConfirm}
-  <div class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
-    <div class="bg-surface-dark rounded-2xl border border-border-dark shadow-2xl max-w-sm w-full">
-      <div class="p-6 text-center">
-        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-danger/20 mb-4">
-          <span class="material-symbols-outlined text-danger text-2xl">delete</span>
-        </div>
-        <h3 class="text-lg font-bold text-white mb-2">Remove Profile Photo?</h3>
-        <p class="text-text-secondary text-sm mb-6">
-          Are you sure you want to remove your profile image? This action cannot be undone.
-        </p>
-
-        {#if removeImageError}
-          <div class="mb-4 p-3 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm">
-            {removeImageError}
-          </div>
-        {/if}
-
-        <div class="flex gap-3">
-          <Button variant="secondary" class="flex-1" onclick={cancelRemoveImage} disabled={removingImage}>
-            Cancel
-          </Button>
-          <Button variant="danger" class="flex-1" onclick={confirmRemoveImage} loading={removingImage}>
-            {removingImage ? 'Removing...' : 'Remove'}
-          </Button>
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
+<style>
+    .pixelated { image-rendering: pixelated; }
+    .custom-scrollbar::-webkit-scrollbar {
+        width: 12px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+        background: var(--color-bg);
+        border-left: 2px solid rgba(0,0,0,0.1);
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: var(--color-surface-raised);
+        border: 2px solid var(--color-border);
+    }
+</style>

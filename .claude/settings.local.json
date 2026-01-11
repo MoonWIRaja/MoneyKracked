@@ -25,7 +25,14 @@
       "Bash(wc:*)",
       "Bash(find:*)",
       "Bash(npx drizzle-kit generate:*)",
-      "Bash(Remove-Item:*)"
+      "Bash(Remove-Item:*)",
+      "Bash(findstr:*)",
+      "Bash(grep:*)",
+      "Bash(tasklist:*)",
+      "Bash(curl:*)",
+      "Bash(npx svelte-check)",
+      "Bash(ls:*)",
+      "Bash(npm run check:*)"
     ]
   }
 }

@@ -4,26 +4,101 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="description" content="MoneyKracked - Smart Finance Dashboard with AI-powered budget coaching" />
-		<meta name="theme-color" content="#122018" />
-		<link rel="icon" href="%sveltekit.assets%/favicon.png" />
+		<meta name="theme-color" content="#111827" />
+		<link rel="icon" type="image/svg+xml" href="%sveltekit.assets%/favicon.svg" />
 
-		<!-- PRELOAD: Critical inline styles to prevent white flash -->
+		<!-- PRELOAD: Inline styles to match new theme (prevent flash) -->
 		<style>
-			html { background-color: #122018; }
-			body { background-color: #122018; color: #ffffff; margin: 0; }
+			html { background-color: #111827; }
+			body {
+				background-color: #111827;
+				color: #f3f4f6;
+				margin: 0;
+				min-height: 100vh;
+				display: flex;
+				flex-direction: column;
+			}
+			/* Loading screen */
+			#svelte-loading {
+				position: fixed;
+				inset: 0;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				justify-content: center;
+				gap: 1rem;
+				z-index: 9999;
+				background-color: #111827;
+				font-family: monospace;
+			}
+			#svelte-loading .spinner {
+				width: 48px;
+				height: 48px;
+				border: 4px solid #1f2937;
+				border-top-color: #4ade80;
+				image-rendering: pixelated;
+				animation: spin 0.8s steps(8) infinite; /* Pixelated animation steps */
+			}
+			@keyframes spin {
+				to { transform: rotate(360deg); }
+			}
+			#svelte-loading .logo {
+				font-size: 24px;
+				font-weight: 700;
+				color: #4ade80;
+				text-transform: uppercase;
+				letter-spacing: 2px;
+			}
+			#svelte-loading.hidden {
+				display: none;
+			}
 		</style>
 
-		<!-- Google Fonts: Inter - Use font-display to prevent blocking -->
+		<!-- Google Fonts: Inter (UI), Press Start 2P (Headings), VT323 (Data) -->
 		<link rel="preconnect" href="https://fonts.googleapis.com" />
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Press+Start+2P&family=VT323&display=swap"
+			rel="stylesheet" />
+		
+		<!-- Material Symbols Outlined -->
+		<link
+			href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
+			rel="stylesheet" />
 
-		<!-- Material Symbols -->
-		<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+		<!-- Theme Init Script -->
+		<script>
+			try {
+				if (localStorage.theme === 'light' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)) {
+					document.documentElement.setAttribute('data-theme', 'light');
+					document.documentElement.classList.remove('dark');
+				} else {
+					document.documentElement.setAttribute('data-theme', 'dark');
+					document.documentElement.classList.add('dark');
+				}
+			} catch (e) { }
+		</script>
 
 		%sveltekit.head%
 	</head>
-	<body data-sveltekit-preload-data="hover" style="background-color: #122018; color: #ffffff;">
+	<body data-sveltekit-preload-data="hover">
+		<!-- Loading Screen -->
+		<div id="svelte-loading">
+			<div class="spinner"></div>
+			<div class="logo">LOADING...</div>
+		</div>
+
 		<div style="display: contents">%sveltekit.body%</div>
+		<script>
+					// Hg screen when app loads
+					if (document.getElementById('svelte-loading')) {
+						window.addEventListener('load', () => {
+							setTimeout(() => {
+								const loader = document.getElementById('svelte-loading');
+								if (loader) loader.classList.add('hidden');
+							}, 100);
+						});
+					}
+		</script>
 	</body>
 </html>

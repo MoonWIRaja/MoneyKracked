@@ -73,20 +73,25 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days
     updateAge: 60 * 60 * 24, // 1 day
+    cookieCache: {
+      maxAge: 60 * 60 * 24 * 7, // 7 days
+      prefix: 'mk_' // Change from 'better-auth' to avoid potential filtering
+    }
   },
 
   advanced: {
-    // Force secure cookies since we're on HTTPS
-    useSecureCookies: true,
+    // Force secure: false - proxy terminates SSL
+    // Behind Cloudflare/Cloudways, the app sees HTTP even though user is on HTTPS
+    useSecureCookies: false,
 
     // Trust proxy headers (Cloudflare)
     trustHostHeader: true,
 
-    // Cookie settings - SameSite=None allows cross-site cookies (needed for OAuth redirects)
-    // But requires Secure=true
+    // Cookie settings - Use 'lax' for better OAuth compatibility
+    // 'lax' works for same-site redirects (GitHub -> back to our site)
     defaultCookieAttributes: {
-      secure: true,
-      sameSite: 'none', // Allow cookies on cross-site redirects from GitHub
+      secure: false,  // Force false - proxy terminates SSL
+      sameSite: 'lax',
       path: '/',
       httpOnly: true
     },

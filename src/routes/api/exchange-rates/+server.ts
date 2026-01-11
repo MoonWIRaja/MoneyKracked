@@ -48,9 +48,9 @@ export const POST: RequestHandler = async ({ request }) => {
 
     // Update each rate
     for (const [fromCurrency, toRates] of Object.entries(rates)) {
-      if (typeof toRates !== 'object') continue;
+      if (typeof toRates !== 'object' || toRates === null) continue;
 
-      for (const [toCurrency, rate] of Object.entries(toRates)) {
+      for (const [toCurrency, rate] of Object.entries(toRates || {})) {
         if (typeof rate !== 'number') continue;
 
         // Check if rate exists

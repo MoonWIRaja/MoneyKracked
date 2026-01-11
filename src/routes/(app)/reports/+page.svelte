@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { Header } from '$lib/components/layout';
-  import { Card, Button } from '$lib/components/ui';
-  import { onMount } from 'svelte';
+  import { IsometricCard, PixelButton } from '$lib/components/ui';
+  import { onMount, onDestroy } from 'svelte';
   import { type Currency } from '$lib/utils/currency';
-  import { getExchangeRates, getUserPreferences, convertAmountMYR, getCachedRatesSync, getCachedPreferencesSync } from '$lib/stores/app-store';
+  import { getExchangeRates, getUserPreferences, getCachedRatesSync, getCachedPreferencesSync } from '$lib/stores/app-store.svelte';
+  import { subscribeToCurrency, convertAmountMYR } from '$lib/stores/currency-store';
 
   // Currency settings
   const currencies: Record<string, { symbol: string; locale: string }> = {
@@ -12,7 +12,6 @@
     'USD': { symbol: '$', locale: 'en-US' }
   };
 
-  // PERFORMANCE: Cached formatters for each currency
   const formatters = {
     'en-MY': new Intl.NumberFormat('en-MY'),
     'en-SG': new Intl.NumberFormat('en-SG'),
@@ -23,13 +22,18 @@
     return formatters[locale as keyof typeof formatters]?.format(amount) || amount.toLocaleString();
   }
 
-  let selectedCurrency = $state<Currency>('MYR');
-  let exchangeRates: Record<string, Record<string, number>> = $state({});
+  // ============================================================
+  // NON-REACTIVE CURRENCY STATE - avoids reactive cycles
+  // Reactive trigger counter forces template re-render on currency change
+  // ============================================================
+  let selectedCurrency: Currency = (getCachedPreferencesSync()?.currency as Currency) || 'MYR';
+  let exchangeRates: Record<string, Record<string, number>> = getCachedRatesSync() || {};
+  let currencyUpdateCounter = $state(0);  // Reactive trigger
+  
   let loading = $state(true);
   
-  // Month/Year selector (like Budget page)
   const currentDate = new Date();
-  let selectedMonth = $state(currentDate.getMonth()); // 0-11
+  let selectedMonth = $state(currentDate.getMonth());
   let selectedYear = $state(currentDate.getFullYear());
   
   const months = [
@@ -38,10 +42,8 @@
   ];
   
   const years = Array.from({ length: 4 }, (_, i) => currentDate.getFullYear() - 2 + i);
-  
   const selectedMonthYear = $derived(`${months[selectedMonth]} ${selectedYear}`);
   
-  // Data from APIs
   interface Budget {
     categoryName: string;
     categoryColor: string;
@@ -61,19 +63,17 @@
   
   let budgets = $state<Budget[]>([]);
   let transactions = $state<Transaction[]>([]);
-  
-  // Computed values
+
+  // Computed values - correctly using $derived for reactivity in Svelte 5
   const totalBudget = $derived(budgets.reduce((sum, b) => sum + b.limitAmount, 0));
   const incomeTotal = $derived(transactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0));
   const totalBudgetWithIncome = $derived(totalBudget + incomeTotal);
   
-  // Spending by category (matches budget page calculation)
-  const spendingByCategory = $derived(() => {
+  const spendingByCategory = $derived.by(() => {
     const expenses = transactions.filter(t => t.type === 'expense');
     const categoryTotals: Record<string, { name: string; amount: number; color: string }> = {};
 
     for (const t of expenses) {
-      // Match budget page logic: 'Uncategorized' and empty become 'Other'
       let catName = t.categoryName || 'Other';
       if (catName === 'Uncategorized') catName = 'Other';
 
@@ -85,101 +85,47 @@
 
     return Object.values(categoryTotals).sort((a, b) => b.amount - a.amount);
   });
-  
-  // Expenses excluding Savings category
+
   const totalExpenses = $derived(
-    spendingByCategory().filter(c => c.name !== 'Savings').reduce((sum, c) => sum + c.amount, 0)
+    spendingByCategory.filter(c => c.name !== 'Savings').reduce((sum, c) => sum + c.amount, 0)
   );
 
-  // Savings category amount
   const savingsCategoryAmount = $derived(
-    spendingByCategory().find(c => c.name === 'Savings')?.amount || 0
+    spendingByCategory.find(c => c.name === 'Savings')?.amount || 0
   );
 
-  // Remaining Budget = Total (budgets + income) - all expenses (including Savings)
-  const allExpenses = $derived(spendingByCategory().reduce((sum, c) => sum + c.amount, 0));
+  const allExpenses = $derived(spendingByCategory.reduce((sum, c) => sum + (c.amount || 0), 0));
   const remainingBudget = $derived(totalBudgetWithIncome - allExpenses);
-
-  // Total Savings = Remaining Budget + Savings Category
   const totalSavings = $derived(remainingBudget + savingsCategoryAmount);
-  
-  // Top 5 spending categories (excluding Savings)
-  const topCategories = $derived(() => {
-    const cats = spendingByCategory().filter(c => c.name !== 'Savings').slice(0, 5);
-    const maxAmount = cats.length > 0 ? cats[0].amount : 1;
-    return cats.map(c => ({
-      ...c,
-      percentage: (c.amount / maxAmount) * 100
-    }));
-  });
-  
-  // Monthly chart data (last 6 months for Savings vs Expenses)
-  // Note: This chart shows data for the selected month/year only, not historical
-  const monthlyData = $derived(() => {
-    // For current selected month, calculate:
-    // - Savings = Remaining Budget + Savings category amount
-    // - Expenses = All expenses except Savings category
-    const monthExpenses = spendingByCategory().filter(c => c.name !== 'Savings');
-    const totalExpensesAmount = monthExpenses.reduce((sum, c) => sum + c.amount, 0);
-    const savingsAmount = savingsCategoryAmount;
 
-    // Return single data point for selected month
+  const monthlyData = $derived.by(() => {
+    const monthExpenses = spendingByCategory.filter(c => c.name !== 'Savings');
+    const totalExpensesAmount = monthExpenses.reduce((sum, c) => sum + c.amount, 0);
+
     return [{
       month: months[selectedMonth].substring(0, 3),
-      savings: totalSavings, // Remaining + Savings category
+      savings: totalSavings,
       expenses: totalExpensesAmount
     }];
   });
-  
-  const maxChartValue = $derived(
-    monthlyData().length > 0 
-      ? Math.max(...monthlyData().flatMap(d => [d.savings, d.expenses])) 
+
+  const maxChartValue = $derived.by(() =>
+    monthlyData.length > 0
+      ? Math.max(...monthlyData.flatMap(d => [d.savings, d.expenses]))
       : 1
   );
-  
-  function getBarHeight(value: number): number {
-    return maxChartValue > 0 ? (value / maxChartValue) * 100 : 0;
-  }
 
-  // PERFORMANCE: Use shared store for faster loading (cached from layout preload)
-  // First try synchronous cache (instant if preloaded), then async fetch if needed
-  onMount(async () => {
-    // Try to get cached data instantly (from layout preload)
-    const cachedRates = getCachedRatesSync();
-    const cachedPrefs = getCachedPreferencesSync();
-
-    if (cachedRates) {
-      exchangeRates = cachedRates;
-    }
-    if (cachedPrefs?.currency) {
-      selectedCurrency = cachedPrefs.currency;
-    }
-
-    // Fetch if not cached (should be rare due to layout preload)
-    const [rates, prefs] = await Promise.all([
-      cachedRates ? cachedRates : getExchangeRates(),
-      cachedPrefs ? cachedPrefs : getUserPreferences()
-    ]);
-
-    if (!cachedRates) {
-      exchangeRates = rates;
-    }
-    if (!cachedPrefs && prefs?.currency) {
-      selectedCurrency = prefs.currency;
-    }
-
-    await fetchData();
-  });
-
-  // Re-fetch when month/year changes
   $effect(() => {
     const _ = selectedMonth + selectedYear;
     fetchData();
   });
 
-  // Convert amount from MYR to selected currency
   function convertAmount(amountMYR: number): number {
     return convertAmountMYR(amountMYR, selectedCurrency, exchangeRates);
+  }
+  
+  function getBarHeight(value: number): number {
+    return maxChartValue > 0 ? (value / maxChartValue) * 100 : 0;
   }
   
   async function fetchData() {
@@ -188,33 +134,22 @@
       const month = selectedMonth + 1;
       const year = selectedYear;
 
-      // Fetch budgets
-      const budgetResponse = await fetch(`/api/budgets?month=${month}&year=${year}`, {
-        credentials: 'include'
-      });
+      const budgetResponse = await fetch(`/api/budgets?month=${month}&year=${year}`, { credentials: 'include' });
       const budgetData = await budgetResponse.json();
       if (budgetData.budgets) {
-        // Convert budget amounts to selected currency
         budgets = budgetData.budgets.map((b: any) => ({
           ...b,
-          limitAmount: convertAmount(b.limitAmount),
-          spent: 0  // Will be calculated from transactions
+          limitAmount: b.limitAmount, // Keep MYR
+          spent: 0
         }));
       }
 
-      // Fetch transactions for the month
       const startDate = new Date(year, month - 1, 1).toISOString().split('T')[0];
       const endDate = new Date(year, month, 0).toISOString().split('T')[0];
-      const txResponse = await fetch(`/api/transactions?startDate=${startDate}&endDate=${endDate}`, {
-        credentials: 'include'
-      });
+      const txResponse = await fetch(`/api/transactions?startDate=${startDate}&endDate=${endDate}`, { credentials: 'include' });
       const txData = await txResponse.json();
       if (txData.transactions) {
-        // Convert transaction amounts to selected currency
-        transactions = txData.transactions.map((t: any) => ({
-          ...t,
-          amount: convertAmount(t.amount)
-        }));
+        transactions = txData.transactions; // Keep MYR
       }
     } catch (err) {
       console.error('Failed to load data:', err);
@@ -223,536 +158,674 @@
     }
   }
 
-  function formatAmount(amount: number): string {
-    const curr = currencies[selectedCurrency];
-    return curr.symbol + ' ' + formatNumber(amount, curr.locale);
+  let unsubscribeCurrency: (() => void) | undefined;
+
+  onMount(async () => {
+    // Initial data load already handled by untrack in state or will be updated by subscription
+    const [rates, prefs] = await Promise.all([
+      getExchangeRates(),
+      getUserPreferences()
+    ]);
+
+    if (rates) exchangeRates = rates;
+    if (prefs?.currency) selectedCurrency = prefs.currency;
+
+    await fetchData();
+
+    unsubscribeCurrency = subscribeToCurrency((currency, rates) => {
+      selectedCurrency = currency;
+      exchangeRates = rates;
+      currencyUpdateCounter++;  // Trigger template re-render
+    });
+  });
+
+  onDestroy(() => {
+    unsubscribeCurrency?.();
+  });
+
+  function formatAmount(amountMYR: number): string {
+    const convertedAmount = convertAmountMYR(amountMYR, selectedCurrency, exchangeRates);
+    const curr = currencies[selectedCurrency] || currencies['MYR'];
+    return curr.symbol + ' ' + formatNumber(convertedAmount, curr.locale);
   }
 
-  // Export CSV - Proper CSV format with BOM for Excel compatibility
   function exportCSV() {
     try {
-      const curr = currencies[selectedCurrency];
-      const now = new Date();
-
-      // Helper function to format amount (use cached formatter)
-      function fmt(amt: number): string {
-        return curr.symbol + ' ' + formatNumber(amt, curr.locale);
-      }
-
-      // Helper to escape CSV values
-      function escapeCsv(val: string): string {
-        // If value contains comma, quote, or newline, wrap in quotes and escape quotes
-        if (val.includes(',') || val.includes('"') || val.includes('\n')) {
-          return '"' + val.replace(/"/g, '""') + '"';
+        const curr = currencies[selectedCurrency];
+        const now = new Date();
+  
+        function fmt(amt: number): string {
+          const conv = convertAmountMYR(amt, selectedCurrency, exchangeRates);
+          return curr.symbol + ' ' + formatNumber(conv, curr.locale);
         }
-        return val;
-      }
-
-      let csv = '';
-
-      // Add BOM for Excel to recognize UTF-8
-      csv = '\uFEFF';
-
-      // Header
-      csv += 'Budget Report,' + selectedMonthYear + '\n';
-      csv += 'Generated,' + now.toLocaleDateString() + '\n\n';
-
-      // Summary Section
-      csv += '===== SUMMARY =====\n';
-      csv += 'Metric,Amount\n';
-      csv += 'Total Budget + Income,' + fmt(totalBudgetWithIncome) + '\n';
-      csv += 'Total Spent,' + fmt(totalExpenses) + '\n';
-      csv += 'Total Savings,' + fmt(totalSavings) + '\n';
-      csv += 'Remaining,' + fmt(remainingBudget) + '\n\n';
-
-      // Budget vs Actual
-      if (budgets.length > 0) {
-        csv += '===== BUDGET VS ACTUAL SPENDING =====\n';
-        csv += 'Category,Budget,Spent,Remaining,Progress %\n';
-        for (const b of budgets) {
-          const cats = spendingByCategory();
-          const spent = cats.find(c => c.name === b.categoryName)?.amount || 0;
-          const rem = b.limitAmount - spent;
-          const pct = b.limitAmount > 0 ? Math.round((spent / b.limitAmount) * 100) : 0;
-          csv += escapeCsv(b.categoryName) + ',' +
-                  fmt(b.limitAmount) + ',' +
-                  fmt(spent) + ',' +
-                  fmt(rem) + ',' +
-                  pct + '%\n';
+  
+        function escapeCsv(val: string): string {
+          if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+            return '"' + val.replace(/"/g, '""') + '"';
+          }
+          return val;
         }
-        csv += '\n';
-      }
-
-      // Spending by Category
-      const cats = spendingByCategory().filter(c => c.name !== 'Income');
-      if (cats.length > 0) {
-        const total = cats.reduce((s, c) => s + c.amount, 0);
-        csv += '===== SPENDING BY CATEGORY =====\n';
-        csv += 'Category,Amount,Percentage %\n';
-        for (const cat of cats) {
-          const pct = total > 0 ? ((cat.amount / total) * 100).toFixed(1) : '0.0';
-          csv += escapeCsv(cat.name) + ',' + fmt(cat.amount) + ',' + pct + '%\n';
+  
+        let csv = '\uFEFF'; // BOM
+        csv += 'Budget Report,' + selectedMonthYear + '\n';
+        csv += 'Generated,' + now.toLocaleDateString() + '\n\n';
+        
+        csv += '===== SUMMARY =====\n';
+        csv += 'Metric,Amount\n';
+        csv += 'Total Budget + Income,' + fmt(totalBudgetWithIncome) + '\n';
+        csv += 'Total Spent,' + fmt(totalExpenses) + '\n';
+        csv += 'Total Savings,' + fmt(totalSavings) + '\n';
+        csv += 'Remaining,' + fmt(remainingBudget) + '\n\n';
+  
+        if (budgets.length > 0) {
+          csv += '===== BUDGET VS ACTUAL SPENDING =====\n';
+          csv += 'Category,Budget,Spent,Remaining,Progress %\n';
+          for (const b of budgets) {
+            const cats = spendingByCategory;
+            const spent = cats.find(c => c.name === b.categoryName)?.amount || 0;
+            const rem = b.limitAmount - spent;
+            const pct = b.limitAmount > 0 ? Math.round((spent / b.limitAmount) * 100) : 0;
+            csv += escapeCsv(b.categoryName) + ',' + fmt(b.limitAmount) + ',' + fmt(spent) + ',' + fmt(rem) + ',' + pct + '%\n';
+          }
+          csv += '\n';
         }
-        csv += '\n';
-      }
-
-      // Transaction History
-      const sorted = [...transactions].sort((a, b) =>
-        new Date(b.date).getTime() - new Date(a.date).getTime()
-      );
-
-      csv += '===== TRANSACTION HISTORY =====\n';
-      csv += 'Date,Type,Category,Payee,Amount\n';
-      for (const t of sorted) {
-        const d = new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
-        const typ = (t.type || 'EXPENSE').toUpperCase();
-        const cat = t.categoryName || 'Other';
-        const py = t.payee || 'No description';
-        const amt = (t.type === 'income' ? '+' : '-') + ' ' + fmt(t.amount);
-        csv += d + ',' +
-                escapeCsv(typ) + ',' +
-                escapeCsv(cat) + ',' +
-                escapeCsv(py) + ',' +
-                escapeCsv(amt) + '\n';
-      }
-
-      csv += '\n===== Generated by MoneyKracked =====\n';
-
-      // Create download
-      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `MoneyKracked_Report_${months[selectedMonth]}_${selectedYear}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 100);
+  
+        const cats = spendingByCategory.filter(c => c.name !== 'Income');
+        if (cats.length > 0) {
+          const total = cats.reduce((s, c) => s + c.amount, 0);
+          csv += '===== SPENDING BY CATEGORY =====\n';
+          csv += 'Category,Amount,Percentage %\n';
+          for (const cat of cats) {
+            const pct = total > 0 ? ((cat.amount / total) * 100).toFixed(1) : '0.0';
+            csv += escapeCsv(cat.name) + ',' + fmt(cat.amount) + ',' + pct + '%\n';
+          }
+          csv += '\n';
+        }
+  
+        const sorted = [...transactions].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        csv += '===== TRANSACTION HISTORY =====\n';
+        csv += 'Date,Type,Category,Payee,Amount\n';
+        for (const t of sorted) {
+          const d = new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+          const typ = (t.type || 'EXPENSE').toUpperCase();
+          const cat = t.categoryName || 'Other';
+          const py = t.payee || 'No description';
+          const amt = (t.type === 'income' ? '+' : '-') + ' ' + fmt(t.amount);
+          csv += d + ',' + escapeCsv(typ) + ',' + escapeCsv(cat) + ',' + escapeCsv(py) + ',' + escapeCsv(amt) + '\n';
+        }
+  
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `MoneyKracked_Report_${months[selectedMonth]}_${selectedYear}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 100);
     } catch (err) {
-      console.error('Export CSV error:', err);
-      alert('Failed to export report. Please try again.');
+        console.error('Export CSV error:', err);
+        alert('Failed to export CSV. Please try again.');
     }
   }
 
-  // Generate Pie Chart SVG
   function generatePieChart(data: Array<{ label: string; amount: number; color: string }>, total: number): string {
     if (total === 0) return '';
-
     let startAngle = 0;
     const slices = data.map(d => {
       if (d.amount === 0) return '';
       const percentage = (d.amount / total) * 100;
       const angle = (d.amount / total) * 360;
       const endAngle = startAngle + angle;
-
       const x1 = 50 + 40 * Math.cos((Math.PI / 180) * startAngle);
       const y1 = 50 + 40 * Math.sin((Math.PI / 180) * startAngle);
       const x2 = 50 + 40 * Math.cos((Math.PI / 180) * endAngle);
       const y2 = 50 + 40 * Math.sin((Math.PI / 180) * endAngle);
-
       const largeArc = angle > 180 ? 1 : 0;
       const pathData = `M 50 50 L ${x1} ${y1} A 40 40 0 ${largeArc} 1 ${x2} ${y2} Z`;
-
       startAngle = endAngle;
       return `<path d="${pathData}" fill="${d.color}" stroke="#fff" stroke-width="1"/>`;
     }).join('');
-
     return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">${slices}</svg>`;
   }
 
-  // Generate Bar Chart HTML
-  function generateBarChart(title: string, data: Array<{ label: string; value: number; color: string }>, maxValue: number): string {
-    if (data.length === 0 || maxValue === 0) return '';
-
-    const bars = data.map(d => {
-      const width = (d.value / maxValue) * 100;
-      return `
-        <tr>
-          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${d.label}</td>
-          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
-            <div style="background: #f3f4f6; border-radius: 4px; overflow: hidden; width: 100%;">
-              <div style="background: ${d.color}; width: ${width}%; height: 20px; border-radius: 4px;"></div>
-            </div>
-          </td>
-          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right; font-weight: 500;">${formatAmount(d.value)}</td>
-        </tr>
-      `;
-    }).join('');
-
-    return `
-      <table style="width: 100%; border-collapse: collapse; margin-top: 12px;">
-        <thead>
-          <tr style="background: #f9fafb;">
-            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Category</th>
-            <th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Progress</th>
-            <th style="padding: 10px; text-align: right; border-bottom: 2px solid #d1d5db;">Amount</th>
+  function generateBarChart(title: string, data: Array<{ label: string; value: number; color: string }>, maxValue: number): string { /* Keep logic same, just structure */
+     if (data.length === 0 || maxValue === 0) return '';
+      const bars = data.map(d => {
+        const width = (d.value / maxValue) * 100;
+        const conv = convertAmountMYR(d.value, selectedCurrency, exchangeRates);
+        const curr = currencies[selectedCurrency];
+        const fmtAmt = curr.symbol + ' ' + formatNumber(conv, curr.locale);
+        return `
+          <tr>
+            <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${d.label}</td>
+            <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">
+              <div style="background: #f3f4f6; border-radius: 4px; overflow: hidden; width: 100%;">
+                <div style="background: ${d.color}; width: ${width}%; height: 20px; border-radius: 4px;"></div>
+              </div>
+            </td>
+            <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: right; font-weight: 500;">${fmtAmt}</td>
           </tr>
-        </thead>
-        <tbody>${bars}</tbody>
-      </table>
-    `;
+        `;
+      }).join('');
+      return `<table style="width: 100%; border-collapse: collapse; margin-top: 12px;"><thead><tr style="background: #f9fafb;"><th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Category</th><th style="padding: 10px; text-align: left; border-bottom: 2px solid #d1d5db;">Progress</th><th style="padding: 10px; text-align: right; border-bottom: 2px solid #d1d5db;">Amount</th></tr></thead><tbody>${bars}</tbody></table>`;
   }
 
-  // Export HTML Report
   function exportReport() {
-    const now = new Date();
-    const fileName = `MoneyKracked_Report_${months[selectedMonth]}_${selectedYear}.html`;
+    try {
+        const curr = currencies[selectedCurrency];
+        const now = new Date();
 
-    // Prepare chart data
-    const pieChartData = spendingByCategory().slice(0, 8).map(c => ({
-      label: c.name,
-      value: c.amount,
-      amount: c.amount,
-      color: c.color
-    }));
-    const pieTotal = pieChartData.reduce((sum, c) => sum + c.amount, 0);
-    const pieChartSVG = generatePieChart(pieChartData, pieTotal);
+        function fmt(amt: number): string {
+          const conv = convertAmountMYR(amt, selectedCurrency, exchangeRates);
+          return curr.symbol + ' ' + formatNumber(conv, curr.locale);
+        }
 
-    // Budget comparison data
-    const budgetData = budgets.map(b => {
-      const spent = spendingByCategory().find(c => c.name === b.categoryName)?.amount || 0;
-      const percentage = b.limitAmount > 0 ? (spent / b.limitAmount) * 100 : 0;
-      let color = '#10b981'; // green
-      if (percentage >= 100) color = '#ef4444'; // red
-      else if (percentage >= 80) color = '#f59e0b'; // orange
+        const cats = spendingByCategory;
+        const topCats = cats.filter((c: any) => c.name !== 'Income' && c.name !== 'Savings').slice(0, 5);
+        const maxCat = topCats[0]?.amount || 1;
 
-      return {
-        label: b.categoryName,
-        value: spent,
-        max: b.limitAmount,
-        percentage: percentage,
-        color: color
-      };
-    }).filter(b => b.max > 0);
+        // Create print container
+        const printContainer = document.createElement('div');
+        printContainer.id = 'print-report-container';
+        printContainer.innerHTML = `
+        <div class="print-header">
+            <h1>MoneyKracked</h1>
+            <div class="subtitle">FINANCIAL REPORT</div>
+            <div class="report-meta">${selectedMonthYear} • Generated ${now.toLocaleDateString()}</div>
+        </div>
 
-    // Spending by category chart
-    const spendingChartData = spendingByCategory()
-      .filter(c => c.name !== 'Income')
-      .map(c => ({
-        label: c.name,
-        value: c.amount,
-        color: c.color
-      }));
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Total Budget</div>
+                <div class="stat-value primary">${fmt(totalBudgetWithIncome)}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Spent</div>
+                <div class="stat-value warning">${fmt(totalExpenses)}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Savings</div>
+                <div class="stat-value success">${fmt(totalSavings)}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Remaining</div>
+                <div class="stat-value ${remainingBudget >= 0 ? 'primary' : 'danger'}">${fmt(remainingBudget)}</div>
+            </div>
+        </div>
 
-    const maxSpending = Math.max(...spendingChartData.map(c => c.value), 1);
+        <div class="section">
+            <h2>Budget Performance</h2>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Budget</th>
+                        <th>Spent</th>
+                        <th>Usage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${budgets.map(b => {
+                        const spent = cats.find((c: any) => c.name === b.categoryName)?.amount || 0;
+                        const pct = b.limitAmount > 0 ? Math.min(Math.round((spent / b.limitAmount) * 100), 100) : 0;
+                        const status = pct >= 100 ? 'danger' : pct >= 80 ? 'warning' : 'success';
+                        return `
+                            <tr>
+                                <td><span class="cat-dot" style="background: ${b.categoryColor}"></span>${b.categoryName}</td>
+                                <td>${fmt(b.limitAmount)}</td>
+                                <td>${fmt(spent)}</td>
+                                <td>
+                                    <div class="progress-wrapper">
+                                        <div class="progress-bar ${status}" style="width: ${pct}%"></div>
+                                        <span class="pct-text">${pct}%</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
 
-    const html = `
+        <div class="section">
+            <h2>Spending by Category</h2>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Amount</th>
+                        <th>% of Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${topCats.map(cat => {
+                        const total = topCats.reduce((s: number, c: any) => s + c.amount, 0);
+                        const pct = total > 0 ? ((cat.amount / total) * 100).toFixed(1) : '0.0';
+                        return `
+                            <tr>
+                                <td><span class="cat-dot" style="background: ${cat.color}"></span>${cat.name}</td>
+                                <td>${fmt(cat.amount)}</td>
+                                <td>${pct}%</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Transaction History</h2>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Description</th>
+                        <th>Category</th>
+                        <th>Amount</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${transactions.slice(0, 20).map(t => `
+                        <tr>
+                            <td>${new Date(t.date).toLocaleDateString()}</td>
+                            <td>${t.payee || 'No description'}</td>
+                            <td>${t.categoryName}</td>
+                            <td class="${t.type === 'income' ? 'income' : 'expense'}">
+                                ${t.type === 'income' ? '+' : '-'} ${fmt(t.amount)}
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="footer">
+            Generated by <strong>MoneyKracked</strong> • Personal Finance Tracker
+        </div>
+        `;
+
+        // Add print styles
+        const style = document.createElement('style');
+        style.id = 'print-report-styles';
+        style.textContent = `
+            @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&display=swap');
+
+            @media print {
+                @page { margin: 0.5cm; size: A4; }
+                body * { visibility: hidden; }
+                #print-report-container, #print-report-container * { visibility: visible; }
+                #print-report-container {
+                    position: absolute;
+                    left: 0;
+                    top: 0;
+                    width: 100%;
+                    background: #0a0a0a !important;
+                    color: #ffffff !important;
+                    font-family: 'JetBrains Mono', monospace;
+                    padding: 20px;
+                    box-sizing: border-box;
+                }
+            }
+
+            #print-report-container {
+                display: none;
+                font-family: 'JetBrains Mono', monospace;
+                background: #0a0a0a;
+                color: #ffffff;
+                max-width: 800px;
+                margin: 0 auto;
+            }
+
+            .print-header {
+                text-align: center;
+                padding: 20px 0;
+                border-bottom: 3px solid #4ade80;
+                margin-bottom: 20px;
+            }
+
+            .print-header h1 {
+                font-size: 28px;
+                font-weight: 800;
+                color: #4ade80;
+                margin: 0;
+                letter-spacing: 2px;
+                text-transform: uppercase;
+            }
+
+            .subtitle {
+                font-size: 12px;
+                color: #60a5fa;
+                margin-top: 5px;
+                letter-spacing: 4px;
+            }
+
+            .report-meta {
+                font-size: 11px;
+                color: #6b7280;
+                margin-top: 10px;
+                text-transform: uppercase;
+            }
+
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 15px;
+                margin-bottom: 25px;
+            }
+
+            .stat-card {
+                border: 2px solid #27272a;
+                padding: 15px;
+                text-align: center;
+                background: #18181b;
+            }
+
+            .stat-label {
+                font-size: 10px;
+                color: #6b7280;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                margin-bottom: 8px;
+            }
+
+            .stat-value {
+                font-size: 18px;
+                font-weight: 700;
+            }
+
+            .stat-value.primary { color: #4ade80; }
+            .stat-value.warning { color: #fbbf24; }
+            .stat-value.success { color: #22c55e; }
+            .stat-value.danger { color: #ef4444; }
+
+            .section {
+                margin-bottom: 25px;
+            }
+
+            .section h2 {
+                font-size: 14px;
+                color: #60a5fa;
+                border-bottom: 2px solid #27272a;
+                padding-bottom: 10px;
+                margin-bottom: 15px;
+                text-transform: uppercase;
+                letter-spacing: 2px;
+            }
+
+            .data-table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+
+            .data-table th {
+                text-align: left;
+                padding: 10px;
+                border-bottom: 2px solid #4ade80;
+                font-size: 10px;
+                color: #6b7280;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+            }
+
+            .data-table td {
+                padding: 10px;
+                border-bottom: 1px solid #27272a;
+                font-size: 11px;
+            }
+
+            .cat-dot {
+                display: inline-block;
+                width: 8px;
+                height: 8px;
+                border-radius: 2px;
+                margin-right: 8px;
+            }
+
+            .progress-wrapper {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+
+            .progress-bar {
+                height: 8px;
+                border-radius: 2px;
+                min-width: 60px;
+            }
+
+            .progress-bar.success { background: #22c55e; }
+            .progress-bar.warning { background: #fbbf24; }
+            .progress-bar.danger { background: #ef4444; }
+
+            .pct-text {
+                font-size: 10px;
+                color: #6b7280;
+                min-width: 35px;
+            }
+
+            .income { color: #22c55e; }
+            .expense { color: #ef4444; }
+
+            .footer {
+                text-align: center;
+                padding: 20px;
+                margin-top: 30px;
+                border-top: 2px solid #27272a;
+                font-size: 10px;
+                color: #6b7280;
+                text-transform: uppercase;
+            }
+        `;
+
+        // Store original body content
+        const originalContent = document.body.innerHTML;
+
+        // Add styles and content
+        document.head.appendChild(style);
+        document.body.appendChild(printContainer);
+        printContainer.style.display = 'block';
+
+        // Print and restore
+        window.print();
+
+        // Cleanup after print dialog closes
+        setTimeout(() => {
+            document.body.removeChild(printContainer);
+            document.head.removeChild(style);
+        }, 100);
+
+    } catch (err) {
+        console.error('Export PDF error:', err);
+        alert('Failed to export PDF. Please try again.');
+    }
+  }
+
+  function exportHTML() {
+    try {
+        const curr = currencies[selectedCurrency];
+        const now = new Date();
+
+        function fmt(amt: number): string {
+          const conv = convertAmountMYR(amt, selectedCurrency, exchangeRates);
+          return curr.symbol + ' ' + formatNumber(conv, curr.locale);
+        }
+
+        const cats = spendingByCategory;
+        const topCats = cats.filter((c: any) => c.name !== 'Income' && c.name !== 'Savings').slice(0, 5);
+        const maxCat = topCats[0]?.amount || 1;
+
+        const html = `
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Budget Report - ${selectedMonthYear}</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      padding: 20px;
-      min-height: 100vh;
-    }
-    .container {
-      max-width: 900px;
-      margin: 0 auto;
-      background: white;
-      border-radius: 16px;
-      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-      overflow: hidden;
-    }
-    .header {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 32px;
-      text-align: center;
-    }
-    .header h1 {
-      font-size: 28px;
-      font-weight: 700;
-      margin-bottom: 8px;
-    }
-    .header p {
-      opacity: 0.9;
-      font-size: 14px;
-    }
-    .content { padding: 32px; }
-    .section {
-      background: #f9fafb;
-      border-radius: 12px;
-      padding: 24px;
-      margin-bottom: 24px;
-      border: 1px solid #e5e7eb;
-    }
-    .section-title {
-      font-size: 18px;
-      font-weight: 700;
-      color: #1f2937;
-      margin-bottom: 16px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .section-title::before {
-      content: '';
-      width: 4px;
-      height: 20px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      border-radius: 2px;
-    }
-    .summary-cards {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 16px;
-    }
-    .card {
-      background: white;
-      padding: 20px;
-      border-radius: 12px;
-      border: 1px solid #e5e7eb;
-      text-align: center;
-    }
-    .card-label {
-      font-size: 13px;
-      color: #6b7280;
-      margin-bottom: 8px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .card-value {
-      font-size: 28px;
-      font-weight: 800;
-      color: #1f2937;
-    }
-    .card-value.positive { color: #10b981; }
-    .card-value.negative { color: #ef4444; }
-    .card-subtitle {
-      font-size: 12px;
-      color: #9ca3af;
-      margin-top: 4px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 16px;
-    }
-    th {
-      background: #f3f4f6;
-      padding: 12px;
-      text-align: left;
-      font-weight: 600;
-      color: #374151;
-      font-size: 13px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      border-bottom: 2px solid #e5e7eb;
-    }
-    td {
-      padding: 12px;
-      border-bottom: 1px solid #e5e7eb;
-      color: #4b5563;
-    }
-    tr:last-child td { border-bottom: none; }
-    .amount {
-      font-family: 'Courier New', monospace;
-      font-weight: 600;
-      text-align: right;
-    }
-    .income { color: #10b981; }
-    .expense { color: #ef4444; }
-    .chart-container {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 32px;
-      flex-wrap: wrap;
-    }
-    .pie-chart {
-      width: 200px;
-      height: 200px;
-    }
-    .legend {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .legend-item {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 14px;
-      color: #4b5563;
-    }
-    .legend-color {
-      width: 16px;
-      height: 16px;
-      border-radius: 4px;
-    }
-    .progress-bar {
-      background: #e5e7eb;
-      border-radius: 8px;
-      overflow: hidden;
-      height: 24px;
-    }
-    .progress-fill {
-      height: 100%;
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      font-weight: 600;
-      color: white;
-      transition: width 0.3s ease;
-    }
-    .footer {
-      text-align: center;
-      padding: 24px;
-      color: #6b7280;
-      font-size: 13px;
-      border-top: 1px solid #e5e7eb;
-      background: #f9fafb;
-    }
-    @media print {
-      body { background: white; padding: 0; }
-      .container { box-shadow: none; }
-    }
-  </style>
+    <meta charset="UTF-8">
+    <title>MoneyKracked Report - ${selectedMonthYear}</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&display=swap');
+        :root {
+            --primary: #4ade80;
+            --secondary: #60a5fa;
+            --warning: #fbbf24;
+            --danger: #ef4444;
+            --success: #22c55e;
+            --bg: #0a0a0a;
+            --surface: #18181b;
+            --border: #27272a;
+            --text: #ffffff;
+            --muted: #6b7280;
+        }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'JetBrains Mono', monospace;
+            margin: 0;
+            padding: 40px;
+        }
+        .container { max-width: 800px; margin: 0 auto; border: 4px solid var(--border); padding: 40px; background: var(--surface); }
+        .header { text-align: center; margin-bottom: 40px; border-bottom: 3px solid var(--primary); padding-bottom: 20px; }
+        h1 { font-size: 28px; color: var(--primary); text-transform: uppercase; margin: 0; letter-spacing: 2px; }
+        .subtitle { font-size: 12px; color: var(--secondary); letter-spacing: 4px; }
+        .meta { font-size: 11px; color: var(--muted); margin-top: 10px; text-transform: uppercase; }
+        .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 40px; }
+        .stat-card { border: 2px solid var(--border); padding: 15px; text-align: center; background: var(--bg); }
+        .stat-label { font-size: 10px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+        .stat-value { font-size: 18px; font-weight: 700; }
+        .stat-value.primary { color: var(--primary); }
+        .stat-value.warning { color: var(--warning); }
+        .stat-value.success { color: var(--success); }
+        .stat-value.danger { color: var(--danger); }
+        .section-title { font-size: 14px; color: var(--secondary); border-bottom: 2px solid var(--border); padding: 10px 0; margin: 30px 0 20px 0; text-transform: uppercase; letter-spacing: 2px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th { text-align: left; padding: 10px; border-bottom: 2px solid var(--primary); text-transform: uppercase; font-size: 10px; color: var(--muted); letter-spacing: 1px; }
+        td { padding: 10px; border-bottom: 1px solid var(--border); font-size: 11px; }
+        .progress-bg { height: 8px; background: var(--bg); border-radius: 2px; overflow: hidden; }
+        .progress-bar { height: 100%; border-radius: 2px; }
+        .footer { text-align: center; margin-top: 40px; padding: 20px; border-top: 2px solid var(--border); font-size: 10px; color: var(--muted); text-transform: uppercase; }
+        .cat-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 8px; }
+        .income { color: var(--success); }
+        .expense { color: var(--danger); }
+    </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>💰 Budget Report</h1>
-      <p>${selectedMonthYear} • Generated on ${now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
-    </div>
-
-    <div class="content">
-      <!-- Summary Cards -->
-      <div class="section">
-        <div class="section-title">Summary Overview</div>
-        <div class="summary-cards">
-          <div class="card">
-            <div class="card-label">Total Budget + Income</div>
-            <div class="card-value">${formatAmount(totalBudgetWithIncome)}</div>
-            <div class="card-subtitle">Available for the month</div>
-          </div>
-          <div class="card">
-            <div class="card-label">Total Spent</div>
-            <div class="card-value">${formatAmount(totalExpenses)}</div>
-            <div class="card-subtitle">All expenses</div>
-          </div>
-          <div class="card">
-            <div class="card-label">Total Savings</div>
-            <div class="card-value positive">${formatAmount(totalSavings)}</div>
-            <div class="card-subtitle">Remaining + Savings</div>
-          </div>
-          <div class="card">
-            <div class="card-label">Remaining</div>
-            <div class="card-value ${remainingBudget >= 0 ? 'positive' : 'negative'}">${formatAmount(remainingBudget)}</div>
-            <div class="card-subtitle">Budget left</div>
-          </div>
+    <div class="container">
+        <div class="header">
+            <h1>MoneyKracked</h1>
+            <div class="subtitle">FINANCIAL REPORT</div>
+            <div class="meta">${selectedMonthYear} • Generated ${now.toLocaleDateString()}</div>
         </div>
-      </div>
 
-      <!-- Budget vs Spent -->
-      <div class="section">
-        <div class="section-title">Budget vs Actual Spending</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Category</th>
-              <th>Budget</th>
-              <th>Spent</th>
-              <th>Remaining</th>
-              <th>Progress</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${budgetData.map(b => `
-              <tr>
-                <td>${b.label}</td>
-                <td class="amount">${formatAmount(b.max)}</td>
-                <td class="amount">${formatAmount(b.value)}</td>
-                <td class="amount ${b.max - b.value >= 0 ? 'positive' : 'negative'}">${formatAmount(b.max - b.value)}</td>
-                <td style="width: 30%;">
-                  <div class="progress-bar">
-                    <div class="progress-fill" style="width: ${Math.min(b.percentage, 100)}%; background: ${b.color};">
-                      ${b.percentage.toFixed(1)}%
-                    </div>
-                  </div>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Spending by Category Pie Chart -->
-      ${pieChartData.length > 0 ? `
-      <div class="section">
-        <div class="section-title">Spending Distribution</div>
-        <div class="chart-container">
-          <div class="pie-chart">${pieChartSVG}</div>
-          <div class="legend">
-            ${pieChartData.map(d => `
-              <div class="legend-item">
-                <div class="legend-color" style="background: ${d.color};"></div>
-                <span>${d.label}: ${formatAmount(d.value)} (${((d.amount / pieTotal) * 100).toFixed(1)}%)</span>
-              </div>
-            `).join('')}
-          </div>
+        <div class="grid">
+            <div class="stat-card">
+                <div class="stat-label">Total Budget</div>
+                <div class="stat-value primary">${fmt(totalBudgetWithIncome)}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Spent</div>
+                <div class="stat-value warning">${fmt(totalExpenses)}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Savings</div>
+                <div class="stat-value success">${fmt(totalSavings)}</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Remaining</div>
+                <div class="stat-value ${remainingBudget >= 0 ? 'primary' : 'danger'}">${fmt(remainingBudget)}</div>
+            </div>
         </div>
-      </div>
-      ` : ''}
 
-      <!-- Top Spending Categories -->
-      <div class="section">
-        <div class="section-title">Spending by Category</div>
-        ${generateBarChart('Spending', spendingChartData, maxSpending)}
-      </div>
-
-      <!-- Transactions List -->
-      <div class="section">
-        <div class="section-title">Transaction History</div>
+        <div class="section-title">Budget Performance</div>
         <table>
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Payee</th>
-              <th>Category</th>
-              <th style="text-align: right;">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${transactions
-              .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-              .map(t => `
-              <tr>
-                <td>${new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
-                <td>${t.payee || t.categoryName}</td>
-                <td><span style="display: inline-block; padding: 2px 8px; background: ${t.categoryColor}20; color: ${t.categoryColor}; border-radius: 4px; font-size: 12px;">${t.categoryName}</span></td>
-                <td class="amount ${t.type === 'income' ? 'income' : 'expense'}">${t.type === 'income' ? '+' : '-'}${formatAmount(t.amount)}</td>
-              </tr>
-            `).join('')}
-          </tbody>
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th>Budgeted</th>
+                    <th>Spent</th>
+                    <th>Usage</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${budgets.map(b => {
+                    const spent = cats.find((c: any) => c.name === b.categoryName)?.amount || 0;
+                    const pct = b.limitAmount > 0 ? Math.min(Math.round((spent / b.limitAmount) * 100), 100) : 0;
+                    const status = pct >= 100 ? 'var(--danger)' : pct >= 80 ? 'var(--warning)' : 'var(--success)';
+                    return `
+                        <tr>
+                            <td><span class="cat-dot" style="background: ${b.categoryColor}"></span>${b.categoryName}</td>
+                            <td>${fmt(b.limitAmount)}</td>
+                            <td>${fmt(spent)}</td>
+                            <td>
+                                <div class="progress-bg"><div class="progress-bar" style="width: ${pct}%; background: ${status}"></div></div>
+                            </td>
+                        </tr>
+                    `;
+                }).join('')}
+            </tbody>
         </table>
-      </div>
-    </div>
 
-    <div class="footer">
-      <p>Generated by MoneyKracked • ${now.toLocaleString()}</p>
-      <p style="margin-top: 4px; font-size: 11px;">This report was generated automatically based on your tracked transactions and budgets.</p>
+        <div class="section-title">Top Spending Categories</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th>Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${topCats.map(cat => `
+                    <tr>
+                        <td><span class="cat-dot" style="background: ${cat.color}"></span>${cat.name}</td>
+                        <td>${fmt(cat.amount)}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+
+        <div class="section-title">Recent Transactions</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Description</th>
+                    <th>Category</th>
+                    <th>Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${transactions.slice(0, 15).map(t => `
+                    <tr>
+                        <td>${new Date(t.date).toLocaleDateString()}</td>
+                        <td>${t.payee || 'No description'}</td>
+                        <td>${t.categoryName}</td>
+                        <td class="${t.type === 'income' ? 'income' : 'expense'}">
+                            ${t.type === 'income' ? '+' : '-'} ${fmt(t.amount)}
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+
+        <div class="footer">
+            Generated by MoneyKracked • Personal Finance Tracker
+        </div>
     </div>
-  </div>
 </body>
-</html>`;
+</html>
+        `;
 
-    // Download
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    link.click();
-    URL.revokeObjectURL(url);
+        const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `MoneyKracked_Report_${months[selectedMonth]}_${selectedYear}.html`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 100);
+    } catch (err) {
+        console.error('Export HTML error:', err);
+        alert('Failed to export Report. Please try again.');
+    }
   }
 </script>
 
@@ -760,242 +833,228 @@
   <title>Reports - MoneyKracked</title>
 </svelte:head>
 
+<!-- Currency reactive trigger - forces re-render when currency changes -->
+{#if currencyUpdateCounter >= 0}<!-- {currencyUpdateCounter} -->{/if}
+
 <!-- Page Header with Month Selector -->
-<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
-  <div>
-    <h2 class="text-3xl font-black tracking-tight text-white">Reports</h2>
-    <p class="mt-1 text-base text-text-secondary">Financial summary for {selectedMonthYear}</p>
-  </div>
-  
-  <div class="flex items-center gap-2">
-    <!-- Month/Year Selector -->
-    <button
-      onclick={() => {
-        if (selectedMonth === 0) {
-          selectedMonth = 11;
-          selectedYear--;
-        } else {
-          selectedMonth--;
-        }
-      }}
-      class="p-2 rounded-lg bg-surface-dark border border-border-dark text-text-secondary hover:text-white hover:border-primary transition-colors"
-    >
-      <span class="material-symbols-outlined">chevron_left</span>
-    </button>
-    
-    <div class="flex items-center gap-2 px-4 py-2 rounded-lg bg-surface-dark border border-border-dark">
-      <span class="material-symbols-outlined text-primary">calendar_month</span>
-      <select
-        bind:value={selectedMonth}
-        class="bg-transparent text-white font-medium focus:outline-none cursor-pointer"
-      >
-        {#each months as month, i}
-          <option value={i} class="bg-surface-dark">{month}</option>
-        {/each}
-      </select>
-      <select
-        bind:value={selectedYear}
-        class="bg-transparent text-white font-medium focus:outline-none cursor-pointer"
-      >
-        {#each years as year}
-          <option value={year} class="bg-surface-dark">{year}</option>
-        {/each}
-      </select>
-    </div>
-    
-    <button
-      onclick={() => {
-        if (selectedMonth === 11) {
-          selectedMonth = 0;
-          selectedYear++;
-        } else {
-          selectedMonth++;
-        }
-      }}
-      class="p-2 rounded-lg bg-surface-dark border border-border-dark text-text-secondary hover:text-white hover:border-primary transition-colors"
-    >
-      <span class="material-symbols-outlined">chevron_right</span>
-    </button>
-
-    <!-- Export Dropdown -->
-    <div class="relative">
-      <button
-        onclick={() => { const el = document.getElementById('export-menu'); el?.classList.toggle('hidden'); }}
-        class="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white font-medium hover:bg-primary-hover transition-colors"
-      >
-        <span class="material-symbols-outlined text-lg">download</span>
-        Export
-        <span class="material-symbols-outlined text-sm">expand_more</span>
-      </button>
-      <div id="export-menu" class="hidden absolute right-0 mt-2 w-48 bg-surface-dark border border-border-dark rounded-lg shadow-xl z-10">
-        <button
-          onclick={() => { document.getElementById('export-menu')?.classList.add('hidden'); exportCSV(); }}
-          class="w-full px-4 py-3 text-left text-white hover:bg-border-dark transition-colors flex items-center gap-2 rounded-t-lg"
-        >
-          <span class="material-symbols-outlined text-lg">table_chart</span>
-          Export CSV
-        </button>
-        <button
-          onclick={() => { document.getElementById('export-menu')?.classList.add('hidden'); exportReport(); }}
-          class="w-full px-4 py-3 text-left text-white hover:bg-border-dark transition-colors flex items-center gap-2 rounded-b-lg"
-        >
-          <span class="material-symbols-outlined text-lg">description</span>
-          Export HTML Report
-        </button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Summary Cards -->
-<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-  <Card>
-    <div class="flex items-center gap-3">
-      <div class="p-2 rounded-lg bg-primary/20">
-        <span class="material-symbols-outlined text-primary">account_balance</span>
-      </div>
-      <div>
-        <p class="text-sm font-medium text-text-secondary">Total Budget</p>
-        <h3 class="text-xl font-bold text-white">
-          {loading ? '...' : formatAmount(totalBudgetWithIncome)}
-        </h3>
-      </div>
-    </div>
-  </Card>
-  
-  <Card>
-    <div class="flex items-center gap-3">
-      <div class="p-2 rounded-lg bg-warning/20">
-        <span class="material-symbols-outlined text-warning">shopping_cart</span>
-      </div>
-      <div>
-        <p class="text-sm font-medium text-text-secondary">Total Spent</p>
-        <h3 class="text-xl font-bold text-white">
-          {loading ? '...' : formatAmount(totalExpenses)}
-        </h3>
-      </div>
-    </div>
-  </Card>
-  
-  <Card>
-    <div class="flex items-center gap-3">
-      <div class="p-2 rounded-lg bg-blue-500/20">
-        <span class="material-symbols-outlined text-blue-400">savings</span>
-      </div>
-      <div>
-        <p class="text-sm font-medium text-text-secondary">Savings</p>
-        <h3 class="text-xl font-bold text-white">
-          {loading ? '...' : formatAmount(totalSavings)}
-        </h3>
-      </div>
-    </div>
-  </Card>
-  
-  <Card>
-    <div class="flex items-center gap-3">
-      <div class="p-2 rounded-lg {remainingBudget >= 0 ? 'bg-primary/20' : 'bg-danger/20'}">
-        <span class="material-symbols-outlined {remainingBudget >= 0 ? 'text-primary' : 'text-danger'}">wallet</span>
-      </div>
-      <div>
-        <p class="text-sm font-medium text-text-secondary">Remaining</p>
-        <h3 class="text-xl font-bold {remainingBudget >= 0 ? 'text-primary' : 'text-danger'}">
-          {loading ? '...' : formatAmount(remainingBudget)}
-        </h3>
-      </div>
-    </div>
-  </Card>
-</div>
-
-<!-- Charts Grid -->
-<div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
-  <!-- Savings vs Expenses Chart -->
-  <Card padding="lg">
-    <h3 class="text-lg font-bold text-white mb-6">Savings vs Expenses</h3>
-    
-    {#if loading}
-      <div class="h-48 flex items-center justify-center">
-        <div class="inline-block animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent"></div>
-      </div>
-    {:else if monthlyData().some(d => d.savings > 0 || d.expenses > 0)}
-      <div class="flex items-end gap-4 h-48">
-        {#each monthlyData() as data}
-          <div class="flex-1 flex flex-col items-center gap-2">
-            <div class="w-full flex gap-1 items-end h-40">
-              <div 
-                class="flex-1 bg-blue-500 rounded-t transition-all duration-500"
-                style="height: {getBarHeight(data.savings)}%"
-                title="Savings: {formatAmount(data.savings)}"
-              ></div>
-              <div 
-                class="flex-1 bg-warning rounded-t transition-all duration-500"
-                style="height: {getBarHeight(data.expenses)}%"
-                title="Expenses: {formatAmount(data.expenses)}"
-              ></div>
-            </div>
-            <span class="text-xs text-text-muted">{data.month}</span>
-          </div>
-        {/each}
+<div class="flex h-[calc(100%+2rem)] lg:h-[calc(100%+4rem)] w-[calc(100%+4rem)] overflow-hidden bg-[var(--color-bg)] -m-4 lg:-m-8 border-black">
+  <!-- Main Reports Column -->
+  <div class="flex-1 flex flex-col min-w-0 h-full relative bg-[var(--color-bg)]">
+    <!-- App-like Inline Header -->
+    <header class="h-20 flex items-center justify-between px-6 lg:px-10 border-b-4 border-black bg-[var(--color-surface-raised)] flex-shrink-0 z-20 shadow-lg">
+      <div class="flex items-center gap-4">
+        <div>
+          <h2 class="text-xl font-display text-[var(--color-primary)]">FINANCIAL <span class="text-[var(--color-text)]">REPORTS</span></h2>
+          <p class="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
+            <span class="flex h-2 w-2 rounded-full bg-[var(--color-primary)] animate-pulse"></span>
+            Summary For {selectedMonthYear}
+          </p>
+        </div>
       </div>
       
-      <!-- Legend -->
-      <div class="flex items-center justify-center gap-6 mt-4 pt-4 border-t border-border-dark">
-        <div class="flex items-center gap-2">
-          <div class="w-3 h-3 rounded-full bg-blue-500"></div>
-          <span class="text-sm text-text-secondary">Savings</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <div class="w-3 h-3 rounded-full bg-warning"></div>
-          <span class="text-sm text-text-secondary">Expenses</span>
-        </div>
-      </div>
-    {:else}
-      <div class="h-48 flex flex-col items-center justify-center text-text-muted">
-        <span class="material-symbols-outlined text-4xl mb-2">bar_chart</span>
-        <p>No transaction data for {selectedMonthYear}</p>
-        <p class="text-xs mt-1">Add transactions to see your trends</p>
-      </div>
-    {/if}
-  </Card>
-  
-  <!-- Top Spending Categories -->
-  <Card padding="lg">
-    <h3 class="text-lg font-bold text-white mb-6">Top Spending Categories</h3>
-    
-    {#if loading}
-      <div class="h-48 flex items-center justify-center">
-        <div class="inline-block animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent"></div>
-      </div>
-    {:else if topCategories().length > 0}
-      <div class="space-y-4">
-        {#each topCategories() as category, i}
-          <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-3">
-                <span 
-                  class="w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold"
-                  style="background-color: {category.color}30; color: {category.color}"
-                >
-                  {i + 1}
-                </span>
-                <span class="font-medium text-white">{category.name}</span>
-              </div>
-              <span class="font-bold text-white">{formatAmount(category.amount)}</span>
-            </div>
-            <div class="h-2 rounded-full bg-border-dark overflow-hidden">
-              <div 
-                class="h-full rounded-full transition-all duration-500"
-                style="width: {category.percentage}%; background-color: {category.color}"
-              ></div>
-            </div>
+      <div class="flex items-center gap-4">
+        <!-- Month/Year Selector -->
+        <div class="hidden sm:flex items-center gap-2">
+          <button onclick={() => { if (selectedMonth===0) {selectedMonth=11;selectedYear--;} else selectedMonth--; }}
+            class="h-10 w-10 border-2 border-black bg-[var(--color-surface)] flex items-center justify-center hover:bg-[var(--color-surface-raised)] transition-colors"
+          >
+            <span class="material-symbols-outlined">chevron_left</span>
+          </button>
+          
+          <div class="flex h-10 items-center gap-2 px-3 border-2 border-black bg-[var(--color-surface)]">
+            <select bind:value={selectedMonth} class="bg-transparent text-[var(--color-text)] font-mono text-[10px] uppercase font-bold focus:outline-none cursor-pointer">
+              {#each months as month, i} <option value={i} class="bg-[var(--color-surface)] font-mono">{month}</option> {/each}
+            </select>
+            <div class="w-px h-4 bg-black/20"></div>
+            <select bind:value={selectedYear} class="bg-transparent text-[var(--color-text)] font-mono text-[10px] uppercase font-bold focus:outline-none cursor-pointer">
+              {#each years as year} <option value={year} class="bg-[var(--color-surface)] font-mono">{year}</option> {/each}
+            </select>
           </div>
-        {/each}
+          
+          <button onclick={() => { if (selectedMonth===11) {selectedMonth=0;selectedYear++;} else selectedMonth++; }}
+            class="h-10 w-10 border-2 border-black bg-[var(--color-surface)] flex items-center justify-center hover:bg-[var(--color-surface-raised)] transition-colors"
+          >
+            <span class="material-symbols-outlined">chevron_right</span>
+          </button>
+        </div>
+
+        <div class="flex gap-2">
+            <PixelButton variant="secondary" onclick={exportReport} class="hidden md:flex h-10 text-[10px] py-2 px-4">
+                <span class="material-symbols-outlined text-sm">picture_as_pdf</span> PDF
+            </PixelButton>
+
+            <PixelButton variant="secondary" onclick={exportHTML} class="h-10 text-[10px] py-2 px-4">
+                <span class="material-symbols-outlined text-sm">description</span> HTML
+            </PixelButton>
+
+            <PixelButton variant="primary" onclick={exportCSV} class="h-10 text-[10px] py-2 px-4">
+                <span class="material-symbols-outlined text-sm">download</span> CSV
+            </PixelButton>
+        </div>
       </div>
-    {:else}
-      <div class="h-48 flex flex-col items-center justify-center text-text-muted">
-        <span class="material-symbols-outlined text-4xl mb-2">pie_chart</span>
-        <p>No spending data for {selectedMonthYear}</p>
-        <p class="text-xs mt-1">Add expense transactions to see breakdown</p>
-      </div>
-    {/if}
-  </Card>
+    </header>
+
+    <!-- Scrollable Content Area -->
+    <div class="flex-1 overflow-y-auto p-6 lg:p-10 space-y-8 scroll-smooth custom-scrollbar">
+
+{#if loading}
+    <div class="flex flex-col items-center justify-center py-20">
+      <div class="inline-block animate-spin h-12 w-12 border-4 border-[var(--color-primary)] border-t-transparent mb-4"></div>
+      <p class="text-[var(--color-text-muted)] font-mono uppercase">Generating Report...</p>
+    </div>
+{:else}
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-6">
+        <IsometricCard class="bg-[var(--color-surface)] text-center">
+            <p class="text-xs font-mono text-[var(--color-text-muted)] tracking-widest uppercase">Total Available</p>
+            <h3 class="mt-2 text-xl font-bold font-mono text-[var(--color-text)]">{formatAmount(totalBudgetWithIncome)}</h3>
+            <p class="text-[10px] text-[var(--color-text-muted)] mt-1 font-mono uppercase">Budget + Income</p>
+        </IsometricCard>
+        
+        <IsometricCard class="bg-[var(--color-surface)] text-center">
+            <p class="text-xs font-mono text-[var(--color-text-muted)] tracking-widest uppercase">Total Spent</p>
+            <h3 class="mt-2 text-xl font-bold font-mono text-[var(--color-warning)]">{formatAmount(totalExpenses)}</h3>
+            <p class="text-[10px] text-[var(--color-text-muted)] mt-1 font-mono uppercase">All Expenses</p>
+        </IsometricCard>
+
+        <IsometricCard class="bg-[var(--color-surface)] text-center">
+            <p class="text-xs font-mono text-[var(--color-text-muted)] tracking-widest uppercase">Total Savings</p>
+            <h3 class="mt-2 text-xl font-bold font-mono text-[var(--color-success)]">{formatAmount(totalSavings)}</h3>
+            <p class="text-[10px] text-[var(--color-text-muted)] mt-1 font-mono uppercase">Remaining + Savings</p>
+        </IsometricCard>
+        
+        <IsometricCard class="bg-[var(--color-surface)] text-center">
+            <p class="text-xs font-mono text-[var(--color-text-muted)] tracking-widest uppercase">Remaining</p>
+            <h3 class="mt-2 text-xl font-bold font-mono {remainingBudget >= 0 ? 'text-[var(--color-primary)]' : 'text-[var(--color-danger)]'}">
+                {formatAmount(remainingBudget)}
+            </h3>
+            <p class="text-[10px] text-[var(--color-text-muted)] mt-1 font-mono uppercase">Budget Left</p>
+        </IsometricCard>
+    </div>
+
+    <!-- Trend Chart -->
+    <IsometricCard title="Savings vs Expenses" class="mb-6">
+        <div class="h-64 flex items-end gap-8 px-8 pt-8 pb-4 relative">
+             <!-- Grid Lines -->
+             <div class="absolute inset-0 flex flex-col justify-between pointer-events-none px-8 py-8 opacity-10">
+                <div class="border-b border-[var(--color-text)] w-full"></div>
+                <div class="border-b border-[var(--color-text)] w-full"></div>
+                <div class="border-b border-[var(--color-text)] w-full"></div>
+                <div class="border-b border-[var(--color-text)] w-full"></div>
+             </div>
+
+             {#each monthlyData as data}
+                <div class="flex-1 flex flex-col items-center gap-2 group relative">
+                    <div class="flex gap-2 w-full justify-center items-end h-40">
+                        <!-- Savings Bar -->
+                        <div 
+                            class="w-12 bg-[var(--color-success)] border-2 border-black shadow-[2px_2px_0px_0px_var(--color-shadow)] transition-all hover:scale-x-110 relative"
+                            style="height: {getBarHeight(data.savings)}%"
+                        >
+                            <div class="absolute -top-6 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white text-[10px] px-1 font-mono whitespace-nowrap z-20">
+                                S: {formatAmount(data.savings)}
+                            </div>
+                        </div>
+                        <!-- Expenses Bar -->
+                        <div 
+                            class="w-12 bg-[var(--color-danger)] border-2 border-black shadow-[2px_2px_0px_0px_var(--color-shadow)] transition-all hover:scale-x-110 relative"
+                            style="height: {getBarHeight(data.expenses)}%"
+                        >
+                            <div class="absolute -top-6 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-black text-white text-[10px] px-1 font-mono whitespace-nowrap z-20">
+                                E: {formatAmount(data.expenses)}
+                            </div>
+                        </div>
+                    </div>
+                    <span class="text-xs font-mono font-bold text-[var(--color-text)] uppercase">{data.month}</span>
+                </div>
+             {/each}
+        </div>
+        <div class="flex justify-center gap-6 mt-2 pb-2">
+            <div class="flex items-center gap-2">
+                <div class="w-3 h-3 bg-[var(--color-success)] border border-black"></div>
+                <span class="text-[10px] font-mono uppercase text-[var(--color-text-muted)]">Savings</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <div class="w-3 h-3 bg-[var(--color-danger)] border border-black"></div>
+                <span class="text-[10px] font-mono uppercase text-[var(--color-text-muted)]">Expenses</span>
+            </div>
+        </div>
+    </IsometricCard>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Budget vs Spent -->
+        <IsometricCard title="Budget Performance">
+            {#if budgets.length > 0}
+                <div class="space-y-4">
+                     <div class="grid grid-cols-12 text-xs font-bold text-[var(--color-text-muted)] font-mono uppercase pb-2 border-b-2 border-[var(--color-border)]">
+                        <div class="col-span-5">Category</div>
+                        <div class="col-span-3 text-right">Spent</div>
+                        <div class="col-span-4 pl-2">Progress</div>
+                     </div>
+                     {#each budgets as budget}
+                        {@const spentData = spendingByCategory.find(c => c.name === budget.categoryName)}
+                        {@const spent = spentData ? spentData.amount : 0}
+                        {@const pct = budget.limitAmount > 0 ? (spent / budget.limitAmount) * 100 : 0}
+                        {@const status = pct >= 100 ? 'danger' : pct >= 80 ? 'warning' : 'safe'}
+                        
+                        <div class="grid grid-cols-12 items-center py-2 border-b border-[var(--color-surface-raised)] last:border-0 hover:bg-[var(--color-surface-raised)]">
+                            <div class="col-span-5 font-bold text-[var(--color-text)] text-sm truncate pr-2">{budget.categoryName}</div>
+                            <div class="col-span-3 font-mono text-[var(--color-text-muted)] text-xs text-right">
+                                {formatAmount(spent)}
+                            </div>
+                            <div class="col-span-4 pl-2">
+                                <div class="h-2 bg-[var(--color-bg)] border border-[var(--color-border)] relative">
+                                    <div class="h-full absolute top-0 left-0" style="width: {Math.min(pct, 100)}%; background-color: {status === 'danger' ? 'var(--color-danger)' : status === 'warning' ? 'var(--color-warning)' : budget.categoryColor}"></div>
+                                </div>
+                            </div>
+                        </div>
+                     {/each}
+                </div>
+            {:else}
+                 <p class="text-[var(--color-text-muted)] text-center py-8 font-mono">No budgets set</p>
+            {/if}
+        </IsometricCard>
+
+        <!-- Top Spending -->
+        <IsometricCard title="Top Spending">
+           {@const cats = spendingByCategory.filter(c => c.name !== 'Income' && c.name !== 'Savings').slice(0, 5)}
+           {#if cats.length > 0}
+             {@const maxVal = cats[0].amount}
+             <div class="space-y-3">
+                {#each cats as cat}
+                    <div class="flex items-center gap-3">
+                        <div class="flex-1">
+                             <div class="flex justify-between text-xs font-bold font-mono mb-1">
+                                <span class="text-[var(--color-text)]">{cat.name}</span>
+                                <span class="text-[var(--color-text-muted)]">{formatAmount(cat.amount)}</span>
+                             </div>
+                             <div class="h-4 bg-[var(--color-bg)] border-2 border-[var(--color-border)] relative">
+                                <div class="h-full bg-[var(--color-primary)] absolute top-0 left-0" style="width: {(cat.amount / maxVal) * 100}%"></div>
+                             </div>
+                        </div>
+                    </div>
+                {/each}
+             </div>
+           {:else}
+              <p class="text-[var(--color-text-muted)] text-center py-8 font-mono">No expenses recorded</p>
+           {/if}
+        </IsometricCard>
+  </div>
+{/if}
+  </div>
 </div>
+</div>
+
+<style>
+    .custom-scrollbar::-webkit-scrollbar {
+        width: 12px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+        background: var(--color-bg);
+        border-left: 2px solid rgba(0,0,0,0.1);
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: var(--color-surface-raised);
+        border: 2px solid var(--color-border);
+    }
+</style>
