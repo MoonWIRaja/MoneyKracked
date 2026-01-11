@@ -97,6 +97,14 @@ goto :eof
 echo.
 echo [*] Stopping Server...
 
+REM Read port from .env file (default 5173)
+set "PORT=5173"
+if exist "%SCRIPT_DIR%\.env" (
+    for /f "tokens=1,2 delims==" %%a in ('type "%SCRIPT_DIR%\.env" ^| findstr /b "PORT="') do (
+        set "PORT=%%b"
+    )
+)
+
 REM Remove PID file FIRST to stop auto-restart loop
 del "%PID_FILE%" 2>NUL
 
@@ -107,8 +115,8 @@ for /f "tokens=2" %%a in ('tasklist ^| findstr /i "npm.exe"') do (
     )
 )
 
-REM Kill process listening on our port (5173 or custom from .env)
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5173.*LISTENING"') do (
+REM Kill process listening on our port (from .env or default 5173)
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":%PORT%.*LISTENING"') do (
     taskkill /F /PID %%a >NUL 2>&1
 )
 

@@ -198,6 +198,19 @@ while (`$restartCount -lt `$maxRestarts) {
 function Stop-Server {
     Print-Info "Stopping MoneyKracked Development Server..."
 
+    # Read port from .env file (default 5173)
+    $port = 5173
+    $envFile = Join-Path $ScriptDir ".env"
+    if (Test-Path $envFile) {
+        $portLine = Select-String -Path $envFile -Pattern "^PORT=" -ErrorAction SilentlyContinue
+        if ($portLine) {
+            $portValue = ($portLine.Line -split '=')[1].Trim()
+            if ($portValue -match '^\d+$') {
+                $port = [int]$portValue
+            }
+        }
+    }
+
     # Remove PID file FIRST to stop auto-restart loop
     Remove-Item $PidFile -ErrorAction SilentlyContinue
 
@@ -211,8 +224,7 @@ function Stop-Server {
         } catch {}
     }
 
-    # Kill process listening on our port (5173)
-    $port = 5173
+    # Kill process listening on our port (from .env or default 5173)
     $netstatResult = netstat -ano | Select-String ":$port.*LISTENING"
     if ($netstatResult) {
         foreach ($line in $netstatResult) {
