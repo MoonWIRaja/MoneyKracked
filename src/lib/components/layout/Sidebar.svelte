@@ -44,7 +44,14 @@
   class="fixed inset-y-0 left-0 z-50 w-64 flex flex-col border-r-4 border-[var(--color-border)] bg-[var(--color-surface)] transition-transform duration-300 lg:static lg:flex lg:translate-x-0
   {mobileOpen ? 'translate-x-0' : '-translate-x-full'}"
 >
-  <div class="flex flex-col h-full justify-between p-4">
+  <div class="flex flex-col h-full justify-between p-4 overflow-y-auto custom-scrollbar relative">
+    <!-- Mobile Close Button -->
+    <button 
+      class="lg:hidden absolute top-2 right-2 p-1 text-[var(--color-text-muted)] hover:text-[var(--color-danger)] transition-colors z-20"
+      onclick={onClose}
+    >
+      <span class="material-symbols-outlined">close</span>
+    </button>
     <!-- Top Section -->
     <div class="flex flex-col gap-8">
       <!-- Brand -->

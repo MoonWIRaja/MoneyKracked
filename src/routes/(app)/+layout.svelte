@@ -107,10 +107,8 @@
       <!-- Mobile Top Bar -->
       <header class="lg:hidden flex items-center justify-between p-4 border-b-4 border-[var(--color-border)] bg-[var(--color-surface)] z-30">
         <div class="flex items-center gap-3">
-            <div class="h-10 w-10 flex items-center justify-center border-2 border-[var(--color-border)] bg-[var(--color-primary)] text-black shadow-[2px_2px_0px_0px_var(--color-shadow)]">
-                <span class="material-symbols-outlined">account_balance_wallet</span>
-            </div>
-            <span class="font-display text-[10px] text-[var(--color-primary)] uppercase tracking-tight">MoneyKracked</span>
+            <img src="/logo.png" alt="MoneyKracked" class="h-8 w-auto object-contain" style="image-rendering: pixelated;" />
+             <span class="font-display text-[10px] text-[var(--color-primary)] uppercase tracking-tight">MoneyKracked</span>
         </div>
         <button
           onclick={() => mobileSidebarOpen = true}
