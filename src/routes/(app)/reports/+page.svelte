@@ -23,12 +23,10 @@
   }
 
   // ============================================================
-  // NON-REACTIVE CURRENCY STATE - avoids reactive cycles
-  // Reactive trigger counter forces template re-render on currency change
+  // REACTIVE CURRENCY STATE - automatically updates UI on change
   // ============================================================
-  let selectedCurrency: Currency = (getCachedPreferencesSync()?.currency as Currency) || 'MYR';
-  let exchangeRates: Record<string, Record<string, number>> = getCachedRatesSync() || {};
-  let currencyUpdateCounter = $state(0);  // Reactive trigger
+  let selectedCurrency = $state<Currency>((getCachedPreferencesSync()?.currency as Currency) || 'MYR');
+  let exchangeRates = $state<Record<string, Record<string, number>>>(getCachedRatesSync() || {});
   
   let loading = $state(true);
   
@@ -163,7 +161,6 @@
   let unsubscribeCurrency: (() => void) | undefined;
 
   onMount(async () => {
-    // Initial data load already handled by untrack in state or will be updated by subscription
     const [rates, prefs] = await Promise.all([
       getExchangeRates(),
       getUserPreferences()
@@ -177,7 +174,6 @@
     unsubscribeCurrency = subscribeToCurrency((currency: Currency, rates: Record<string, Record<string, number>>) => {
       selectedCurrency = currency;
       exchangeRates = rates;
-      currencyUpdateCounter++;  // Trigger template re-render
     });
   });
 
@@ -834,9 +830,6 @@
 <svelte:head>
   <title>Reports - MoneyKracked</title>
 </svelte:head>
-
-<!-- Currency reactive trigger - forces re-render when currency changes -->
-{#if currencyUpdateCounter >= 0}<!-- {currencyUpdateCounter} -->{/if}
 
 <!-- Page Header with Month Selector -->
 <div class="flex flex-col h-full w-full overflow-hidden bg-[var(--color-bg)]">
