@@ -44,6 +44,8 @@
   const years = Array.from({ length: 4 }, (_, i) => currentDate.getFullYear() - 2 + i);
   const selectedMonthYear = $derived(`${months[selectedMonth]} ${selectedYear}`);
   
+  let showExportDropdown = $state(false);
+  
   interface Budget {
     categoryName: string;
     categoryColor: string;
@@ -881,16 +883,49 @@
           </button>
         </div>
 
-        <div class="flex gap-2">
-            <PixelButton variant="primary" onclick={exportReport} class="h-10 px-2 sm:px-4">
-                <span class="material-symbols-outlined text-sm">picture_as_pdf</span>
-                <span class="hidden sm:inline ml-1 text-[10px]">PDF</span>
-            </PixelButton>
+        <div class="flex gap-2 relative">
+            <!-- Desktop Buttons -->
+            <div class="hidden md:flex gap-2">
+                <PixelButton variant="primary" onclick={exportReport} class="h-10 px-4">
+                    <span class="material-symbols-outlined text-sm">picture_as_pdf</span>
+                    <span class="ml-1 text-[10px]">PDF</span>
+                </PixelButton>
 
-            <PixelButton variant="secondary" onclick={exportCSV} class="h-10 px-2 sm:px-4">
-                <span class="material-symbols-outlined text-sm">download</span>
-                <span class="hidden sm:inline ml-1 text-[10px]">CSV</span>
-            </PixelButton>
+                <PixelButton variant="secondary" onclick={exportCSV} class="h-10 px-4">
+                    <span class="material-symbols-outlined text-sm">download</span>
+                    <span class="ml-1 text-[10px]">CSV</span>
+                </PixelButton>
+            </div>
+
+            <!-- Mobile Dropdown -->
+            <div class="md:hidden">
+                <PixelButton variant="primary" onclick={() => showExportDropdown = !showExportDropdown} class="h-10 px-3">
+                    <span class="material-symbols-outlined text-sm">download</span>
+                    <span class="material-symbols-outlined text-xs ml-1 transition-transform {showExportDropdown ? 'rotate-180' : ''}">expand_more</span>
+                </PixelButton>
+
+                {#if showExportDropdown}
+                    <!-- svelte-ignore a11y_click_events_have_key_events -->
+                    <!-- svelte-ignore a11y_no_static_element_interactions -->
+                    <div class="fixed inset-0 z-40 bg-black/0" onclick={() => showExportDropdown = false}></div>
+                    <div class="absolute right-0 top-full mt-2 w-40 bg-[var(--color-surface)] border-4 border-black shadow-[8px_8px_0px_0px_black] z-50 animate-in slide-in-from-top-2">
+                        <button 
+                            onclick={() => { exportReport(); showExportDropdown = false; }}
+                            class="w-full text-left px-4 py-3 flex items-center gap-2 hover:bg-[var(--color-primary)] hover:text-black transition-colors border-b-2 border-black/10"
+                        >
+                            <span class="material-symbols-outlined text-sm">picture_as_pdf</span>
+                            <span class="text-[10px] font-display">PDF REPORT</span>
+                        </button>
+                        <button 
+                            onclick={() => { exportCSV(); showExportDropdown = false; }}
+                            class="w-full text-left px-4 py-3 flex items-center gap-2 hover:bg-[var(--color-secondary)] hover:text-white transition-colors"
+                        >
+                            <span class="material-symbols-outlined text-sm">download</span>
+                            <span class="text-[10px] font-display">CSV DATA</span>
+                        </button>
+                    </div>
+                {/if}
+            </div>
         </div>
       </div>
     </header>
