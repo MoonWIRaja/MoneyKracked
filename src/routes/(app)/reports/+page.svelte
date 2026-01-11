@@ -1,4 +1,3 @@
-```
 <script lang="ts">
   import { IsometricCard, PixelButton } from '$lib/components/ui';
   import { onMount, onDestroy } from 'svelte';
