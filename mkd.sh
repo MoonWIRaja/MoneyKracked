@@ -1,0 +1,305 @@
+#!/bin/bash
+# ============================================================
+# MoneyKracked Development Server Manager
+# Works on macOS and Linux
+# Usage: ./mkd.sh [start|stop|status|logs|restart]
+# ============================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PID_FILE="$SCRIPT_DIR/logs/.server.pid"
+LOG_DIR="$SCRIPT_DIR/logs"
+MKD_COLORS="true"
+
+# Colors
+if [ -t 1 ] && [ "$MKD_COLORS" != "false" ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    PURPLE='\033[0;35m'
+    CYAN='\033[0;36m'
+    NC='\033[0m' # No Color
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    PURPLE=''
+    CYAN=''
+    NC=''
+fi
+
+# ============================================================
+# Helper Functions
+# ============================================================
+
+print_header() {
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "  $1"
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+}
+
+print_ok() {
+    echo -e "${GREEN}[OK]${NC} $1"
+}
+
+print_info() {
+    echo -e "${BLUE}[*]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[!]${NC} $1"
+}
+
+print_warn() {
+    echo -e "${YELLOW}[!]${NC} $1"
+}
+
+# Check if server is running
+is_server_running() {
+    if [ -f "$PID_FILE" ]; then
+        local pid=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$pid" ] && ps -p "$pid" > /dev/null 2>&1; then
+            return 0  # Running
+        fi
+    fi
+    return 1  # Not running
+}
+
+# Get local IP addresses
+get_local_ips() {
+    local ips=""
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS
+        ips=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
+    else
+        # Linux
+        ips=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    echo "$ips"
+}
+
+# ============================================================
+# Commands
+# ============================================================
+
+show_help() {
+    print_header "MoneyKracked Development Server Manager"
+    echo ""
+    echo "  Commands:"
+    echo "    ./mkd.sh start    - Start the development server in background"
+    echo "    ./mkd.sh stop     - Stop the development server"
+    echo "    ./mkd.sh restart  - Restart the development server"
+    echo "    ./mkd.sh status   - Show server status"
+    echo "    ./mkd.sh logs     - View server logs (tail -f)"
+    echo ""
+    echo "  Or simply use:"
+    echo "    mkd start  (if you created the alias)"
+    echo ""
+}
+
+start_server() {
+    print_info "Starting MoneyKracked Development Server..."
+
+    # Create logs directory if not exists
+    mkdir -p "$LOG_DIR"
+
+    # Check if already running
+    if is_server_running; then
+        local pid=$(cat "$PID_FILE")
+        print_error "Server is already running (PID: $pid)"
+        echo "      Use 'mkd stop' first, or 'mkd restart' to restart."
+        exit 1
+    fi
+
+    # Create log file with timestamp
+    local timestamp=$(date +"%Y-%m-%d_%H%M%S")
+    local log_file="$LOG_DIR/server_$timestamp.log"
+
+    # Create timestamp marker in log
+    echo "============================================================" > "$log_file"
+    echo "  MoneyKracked Server Log - $(date)" >> "$log_file"
+    echo "============================================================" >> "$log_file"
+    echo "" >> "$log_file"
+
+    # Get local IPs for logging
+    local local_ip=$(get_local_ips)
+
+    # Start server in background with auto-restart
+    (
+        while true; do
+            if [ -f "$PID_FILE" ]; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Server running..." >> "$log_file"
+                npm run dev >> "$log_file" 2>&1
+                exit_code=$?
+
+                # Check if we should restart or stop
+                if [ -f "$PID_FILE" ]; then
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Server crashed (exit code: $exit_code), restarting in 2 seconds..." >> "$log_file"
+                    sleep 2
+                else
+                    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Server stopped (mkd stop was used)" >> "$log_file"
+                    break
+                fi
+            else
+                break
+            fi
+        done
+    ) &
+
+    # Save PID
+    local bg_pid=$!
+    echo $bg_pid > "$PID_FILE"
+
+    # Wait a moment for server to start
+    sleep 3
+
+    # Check if server started successfully
+    if is_server_running; then
+        print_ok "Server started successfully!"
+        echo ""
+        print_header "SERVER INFO"
+        echo "  Status  : ${GREEN}RUNNING${NC}"
+        echo "  PID     : $bg_pid"
+        echo "  URL     : ${CYAN}http://localhost:5173${NC}"
+        echo "  Network : Use your local IP from below for mobile access"
+        echo ""
+        echo "  Your Network IP:"
+        if [ -n "$local_ip" ]; then
+            echo "             - ${CYAN}http://$local_ip:5173${NC}"
+        fi
+        echo ""
+        echo -e "${CYAN}============================================================${NC}"
+        echo "  Log File: $log_file"
+        echo "  Use 'mkd logs' to view logs"
+        echo "  Use 'mkd stop' to stop the server"
+        echo -e "${CYAN}============================================================${NC}"
+        echo ""
+    else
+        print_error "Failed to start server. Check log file:"
+        echo "        $log_file"
+        rm -f "$PID_FILE"
+        exit 1
+    fi
+}
+
+stop_server() {
+    print_info "Stopping MoneyKracked Development Server..."
+
+    if [ ! -f "$PID_FILE" ]; then
+        print_warn "Server is not running (no PID file found)"
+        exit 0
+    fi
+
+    local pid=$(cat "$PID_FILE")
+
+    if ! ps -p "$pid" > /dev/null 2>&1; then
+        print_warn "Server process not found (stale PID file)"
+        rm -f "$PID_FILE"
+        exit 0
+    fi
+
+    # Kill the server process and children
+    pkill -P "$pid" 2>/dev/null
+    kill "$pid" 2>/dev/null
+
+    # Wait a moment
+    sleep 1
+
+    # Force kill if still running
+    if ps -p "$pid" > /dev/null 2>&1; then
+        kill -9 "$pid" 2>/dev/null
+    fi
+
+    # Clean up PID file
+    rm -f "$PID_FILE"
+
+    print_ok "Server stopped successfully"
+    echo ""
+}
+
+show_status() {
+    print_header "Server Status"
+
+    if is_server_running; then
+        local pid=$(cat "$PID_FILE")
+        echo "  Status: ${GREEN}RUNNING${NC}"
+        echo "  PID:    $pid"
+        echo "  URL:    ${CYAN}http://localhost:5173${NC}"
+        echo ""
+        echo "  Use 'mkd logs' to view logs"
+        echo "  Use 'mkd stop' to stop the server"
+    else
+        echo "  Status: ${RED}STOPPED${NC}"
+        echo ""
+        echo "  Start the server with: mkd start"
+        # Clean up stale PID file
+        rm -f "$PID_FILE" 2>/dev/null
+    fi
+    echo ""
+}
+
+show_logs() {
+    if [ ! -d "$LOG_DIR" ]; then
+        print_error "No logs directory found"
+        exit 1
+    fi
+
+    # Find the most recent log file
+    local latest_log=$(ls -t "$LOG_DIR"/server_*.log 2>/dev/null | head -1)
+
+    if [ -z "$latest_log" ]; then
+        print_error "No log files found"
+        exit 1
+    fi
+
+    print_info "Showing logs from: $(basename "$latest_log")"
+    print_info "Press Ctrl+C to stop watching"
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo ""
+
+    # Tail the log file
+    tail -f "$latest_log"
+}
+
+restart_server() {
+    stop_server
+    sleep 1
+    start_server
+}
+
+# ============================================================
+# Main
+# ============================================================
+
+# Create logs directory
+mkdir -p "$LOG_DIR"
+
+# Parse command
+case "${1:-}" in
+    start)
+        start_server
+        ;;
+    stop)
+        stop_server
+        ;;
+    status)
+        show_status
+        ;;
+    logs)
+        show_logs
+        ;;
+    restart)
+        restart_server
+        ;;
+    help|--help|-h)
+        show_help
+        ;;
+    *)
+        show_help
+        exit 1
+        ;;
+esac
