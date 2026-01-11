@@ -282,6 +282,10 @@ Then open [http://localhost:5173](http://localhost:5173) in your browser.
 Using the **mkd** server manager (recommended):
 
 ```bash
+# Linux & mac first setup
+chmod +x mkd
+
+
 # Install mkd globally (first time only)
 npm link
 
