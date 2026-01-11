@@ -421,8 +421,8 @@
           <span class="material-symbols-outlined">menu</span>
         </button>
         <div>
-          <h2 class="text-xl font-display text-[var(--color-primary)]">MONKRAC AI <span class="text-[var(--color-text)]">COACH</span></h2>
-          <p class="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2">
+          <h2 class="text-lg md:text-xl font-display text-[var(--color-primary)]">MONKRAC AI <span class="text-[var(--color-text)]">COACH</span></h2>
+          <p class="text-[9px] md:text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2">
             <span class="flex h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
             ACTIVE SESSION: {selectedSessionId ? selectedSessionId.slice(0, 8) : 'NEW'}
           </p>

@@ -475,8 +475,8 @@
           <span class="material-symbols-outlined">menu</span>
         </button>
         <div>
-          <h2 class="text-xl font-display text-[var(--color-primary)]">TRANSACTION <span class="text-[var(--color-text)]">LOG</span></h2>
-          <p class="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
+          <h2 class="text-lg md:text-xl font-display text-[var(--color-primary)]">TRANSACTION <span class="text-[var(--color-text)]">LOG</span></h2>
+          <p class="text-[9px] md:text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
             <span class="flex h-2 w-2 rounded-full bg-[var(--color-primary)] animate-pulse"></span>
             History For {selectedMonthYear}
           </p>
@@ -529,8 +529,9 @@
 
         <!-- Add Transaction Button -->
         {#if canAddTransaction}
-          <PixelButton onclick={openAddModal} variant="primary" class="h-10 text-[10px] py-2 px-4">
-            <span class="material-symbols-outlined text-sm">add</span> ADD TRANSACTION
+          <PixelButton onclick={openAddModal} variant="primary" class="h-10 py-2 px-3 sm:px-4">
+            <span class="material-symbols-outlined text-sm">add</span>
+            <span class="hidden sm:inline ml-1 text-[10px]">ADD TRANSACTION</span>
           </PixelButton>
         {/if}
       </div>

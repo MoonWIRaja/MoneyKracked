@@ -368,8 +368,8 @@
           <span class="material-symbols-outlined">menu</span>
         </button>
         <div>
-          <h2 class="text-xl font-display text-[var(--color-primary)]">BUDGET <span class="text-[var(--color-text)]">PLANNER</span></h2>
-          <p class="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
+          <h2 class="text-lg md:text-xl font-display text-[var(--color-primary)]">BUDGET <span class="text-[var(--color-text)]">PLANNER</span></h2>
+          <p class="text-[9px] md:text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
             <span class="flex h-2 w-2 rounded-full bg-[var(--color-primary)] animate-pulse"></span>
             Limits for {selectedMonthYear}
           </p>
@@ -436,14 +436,14 @@
 <IsometricCard title="Budget Details">
   <div class="flex items-center justify-between mb-6">
     <h3 class="text-sm font-bold font-display uppercase text-[var(--color-text)] hidden sm:block">Categories</h3>
-    <div class="flex gap-2 w-full sm:w-auto justify-end">
-      <PixelButton variant="secondary" onclick={goToAICoach}>
+    <div class="flex items-center gap-3">
+      <PixelButton variant="secondary" onclick={goToAICoach} class="flex-1 sm:flex-none py-3 px-3">
          <span class="material-symbols-outlined text-sm">smart_toy</span>
-         <span>AI Setup</span>
+         <span class="text-[10px] sm:text-xs">AI SETUP</span>
       </PixelButton>
-      <PixelButton variant="primary" onclick={openAddModal}>
+      <PixelButton variant="primary" onclick={openAddModal} class="flex-1 sm:flex-none py-3 px-3">
          <span class="material-symbols-outlined text-sm">add</span>
-         <span>Add Budget</span>
+         <span class="text-[10px] sm:text-xs">ADD BUDGET</span>
       </PixelButton>
     </div>
   </div>

@@ -848,8 +848,8 @@
               <span class="material-symbols-outlined">menu</span>
             </button>
             <div>
-          <h2 class="text-xl font-display text-[var(--color-primary)]">FINANCIAL <span class="text-[var(--color-text)]">REPORTS</span></h2>
-          <p class="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
+          <h2 class="text-lg md:text-xl font-display text-[var(--color-primary)]">FINANCIAL <span class="text-[var(--color-text)]">REPORTS</span></h2>
+          <p class="text-[9px] md:text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
             <span class="flex h-2 w-2 rounded-full bg-[var(--color-primary)] animate-pulse"></span>
             Summary For {selectedMonthYear}
           </p>
@@ -883,15 +883,12 @@
         </div>
 
         <div class="flex gap-2">
-            <PixelButton variant="secondary" onclick={exportReport} class="hidden md:flex h-10 text-[10px] py-2 px-4">
-                <span class="material-symbols-outlined text-sm">picture_as_pdf</span> PDF
+            <PixelButton variant="primary" onclick={exportReport} class="h-10 px-3 sm:px-4">
+                <span class="material-symbols-outlined text-sm">picture_as_pdf</span>
+                <span class="hidden sm:inline ml-1 text-[10px]">PDF</span>
             </PixelButton>
 
-            <PixelButton variant="secondary" onclick={exportHTML} class="h-10 text-[10px] py-2 px-4">
-                <span class="material-symbols-outlined text-sm">description</span> HTML
-            </PixelButton>
-
-            <PixelButton variant="primary" onclick={exportCSV} class="h-10 text-[10px] py-2 px-4">
+            <PixelButton variant="secondary" onclick={exportCSV} class="hidden sm:flex h-10 text-[10px] py-2 px-4">
                 <span class="material-symbols-outlined text-sm">download</span> CSV
             </PixelButton>
         </div>

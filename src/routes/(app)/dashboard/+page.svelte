@@ -386,8 +386,8 @@
           <span class="material-symbols-outlined">menu</span>
         </button>
         <div>
-          <h2 class="text-xl font-display text-[var(--color-primary)]">DAILY <span class="text-[var(--color-text)]">DASHBOARD</span></h2>
-          <p class="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
+          <h2 class="text-lg md:text-xl font-display text-[var(--color-primary)]">DAILY <span class="text-[var(--color-text)]">DASHBOARD</span></h2>
+          <p class="text-[9px] md:text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
             <span class="flex h-2 w-2 rounded-full bg-[var(--color-primary)] animate-pulse"></span>
             Financial Overview • {data.month}/{data.year}
           </p>
