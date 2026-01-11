@@ -356,7 +356,7 @@
   <title>MonKrac AI Coach - MoneyKracked</title>
 </svelte:head>
 
-<div class="flex flex-col h-full w-full overflow-hidden bg-[var(--color-bg)]">
+<div class="flex flex-col lg:flex-row h-full w-full overflow-hidden bg-[var(--color-bg)]">
   <!-- Left Sidebar (History) -->
   <aside class="fixed inset-y-0 left-0 z-50 w-80 lg:static lg:flex flex-col border-r-4 border-black bg-[var(--color-surface)] transition-transform duration-300 {showMobileHistory ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'} {showMobileHistory ? 'flex' : 'hidden lg:flex'}">
     <div class="p-6 border-b-4 border-black bg-[var(--color-surface-raised)] shadow-md">
@@ -528,11 +528,11 @@
               {/each}
             </div>
             
-            <div class="flex gap-4">
-              <PixelButton variant="primary" onclick={applyBudgets} loading={applyingBudgets} class="flex-1 py-4 text-sm font-bold">
+            <div class="flex flex-col sm:flex-row gap-4">
+              <PixelButton variant="primary" onclick={applyBudgets} loading={applyingBudgets} class="flex-1 h-12 text-sm font-bold">
                 APPLY ALL CHANGES
               </PixelButton>
-              <PixelButton variant="ghost" onclick={cancelBudgets} disabled={applyingBudgets} class="px-8 py-4 text-sm">
+              <PixelButton variant="ghost" onclick={cancelBudgets} disabled={applyingBudgets} class="flex-1 sm:flex-none h-12 px-6 text-sm">
                 DISMISS
               </PixelButton>
             </div>

@@ -107,12 +107,12 @@
     <div class="flex-1 flex flex-col min-w-0 h-full">
 
       <!-- Main Content Area -->
-      <main class="flex-1 min-h-0 relative">
+      <main class="flex-1 min-h-0 relative lg:p-8">
         <div class="absolute inset-0 opacity-5 pointer-events-none" 
              style="background-image: radial-gradient(var(--color-text-muted) 1px, transparent 1px); background-size: 20px 20px;">
         </div>
         
-        <div class="relative z-10 w-full h-full flex flex-col min-h-0 overflow-hidden">
+        <div class="relative z-10 w-full h-full flex flex-col min-h-0 overflow-hidden lg:rounded-none">
           {@render children()}
         </div>
       </main>
