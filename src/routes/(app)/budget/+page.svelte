@@ -436,14 +436,14 @@
 <IsometricCard title="Budget Details">
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
     <h3 class="text-sm font-bold font-display uppercase text-[var(--color-text)]">Categories</h3>
-    <div class="flex items-center gap-3 w-full sm:w-auto">
-      <PixelButton variant="secondary" onclick={goToAICoach} class="flex-1 sm:flex-none h-10 px-3">
+    <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+      <PixelButton variant="secondary" onclick={goToAICoach} class="flex-1 sm:flex-none h-10 px-2 sm:px-3">
          <span class="material-symbols-outlined text-sm">smart_toy</span>
-         <span class="text-[10px] sm:text-xs ml-1">AI SETUP</span>
+         <span class="text-[9px] sm:text-xs">AI SETUP</span>
       </PixelButton>
-      <PixelButton variant="primary" onclick={openAddModal} class="flex-1 sm:flex-none h-10 px-3">
+      <PixelButton variant="primary" onclick={openAddModal} class="flex-1 sm:flex-none h-10 px-2 sm:px-3">
          <span class="material-symbols-outlined text-sm">add</span>
-         <span class="text-[10px] sm:text-xs ml-1">ADD BUDGET</span>
+         <span class="text-[9px] sm:text-xs">ADD BUDGET</span>
       </PixelButton>
     </div>
   </div>
