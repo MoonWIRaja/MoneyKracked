@@ -42,14 +42,14 @@
         <span class="material-symbols-outlined text-4xl text-black">lock_open</span>
       </div>
       <h1 class="text-2xl font-display text-[var(--color-primary)] tracking-tighter uppercase">MoneyKracked</h1>
-      <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest mt-1">RECOVERY_PROTOCOL_v2</p>
+      <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest mt-1">FORGOT YOUR PASSWORD?</p>
     </div>
 
-    <IsometricCard title={success ? "EMAIL_DISPATCHED" : "RECOVER_ACCESS"}>
+    <IsometricCard title={success ? "EMAIL SENT" : "RESET PASSWORD"}>
       {#if !success}
         <div class="space-y-6">
           <p class="text-[10px] font-mono text-[var(--color-text-muted)] uppercase text-center mt-2 leading-relaxed">
-            PROVIDE_ASSOCIATED_EMAIL_TO_RECEIVE_RECOVERY_DATA_LINK.
+            Enter your email address and we'll send you a link to reset your password.
           </p>
 
           {#if error}
@@ -60,10 +60,10 @@
 
           <div class="space-y-4">
             <Input
-              label="RECOVERY_EMAIL"
+              label="EMAIL ADDRESS"
               type="email"
               bind:value={email}
-              placeholder="..."
+              placeholder="Enter your email..."
               onkeydown={(e: KeyboardEvent) => e.key === 'Enter' && handleForgotPassword()}
               disabled={loading}
             />
@@ -74,14 +74,14 @@
               onclick={handleForgotPassword}
               loading={loading}
             >
-              RUN_RECOVERY
+              SEND RESET LINK
             </PixelButton>
 
             <button
               onclick={goToLogin}
               class="w-full text-[9px] font-mono text-[var(--color-text-muted)] hover:text-[var(--color-text)] uppercase tracking-wider transition-colors"
             >
-              ABORT_AND_EXIT_TO_LOGIN
+              BACK TO LOGIN
             </button>
           </div>
         </div>
@@ -90,17 +90,17 @@
           <div class="inline-flex items-center justify-center w-16 h-16 border-4 border-black bg-[var(--color-primary)] shadow-[4px_4px_0px_0px_var(--color-shadow)] mb-2">
             <span class="material-symbols-outlined text-white animate-bounce">mark_email_read</span>
           </div>
-          <p class="text-[10px] font-mono text-[var(--color-text)] uppercase">CHECK_RECOVERY_NODE: {email}</p>
+          <p class="text-[10px] font-mono text-[var(--color-text)] uppercase tracking-tight">Check your inbox: {email}</p>
           
           <div class="p-4 bg-[var(--color-surface-raised)] border-4 border-black text-left space-y-2">
-            <p class="text-[9px] font-display text-[var(--color-primary)] uppercase">WARNING:</p>
+            <p class="text-[9px] font-display text-[var(--color-primary)] uppercase">IMPORTANT:</p>
             <p class="text-[9px] font-mono uppercase leading-relaxed">
-               LINK_VALID_FOR_60_MINUTES_ONLY._IF_NOT_FOUND_CHECK_SPAM_FILTER_BUFFER.
+               The link is valid for 60 minutes. If you don't see the email, check your spam folder.
             </p>
           </div>
 
           <PixelButton variant="primary" class="w-full text-xs" onclick={goToLogin}>
-            BACK_TO_LOGIN
+            BACK TO LOGIN
           </PixelButton>
         </div>
       {/if}
