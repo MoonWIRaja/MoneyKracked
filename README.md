@@ -190,14 +190,7 @@ GRANT ALL PRIVILEGES ON DATABASE moneykracked TO moneykracked_user;
 
 ```bash
 # Push the schema to your database
-npm run db:push
-```
-
-**Step 3: (Optional) Seed Sample Data**
-
-```bash
-# Add sample data for testing
-npm run db:seed
+npx drizzle-kit push
 ```
 
 ---
@@ -289,6 +282,10 @@ Then open [http://localhost:5173](http://localhost:5173) in your browser.
 Using the **mkd** server manager (recommended):
 
 ```bash
+# Linux & mac first setup
+chmod +x mkd
+
+
 # Install mkd globally (first time only)
 npm link
 
