@@ -57,6 +57,17 @@ print_warn() {
     echo -e "${YELLOW}[!]${NC} $1"
 }
 
+# Get port from .env file
+get_server_port() {
+    local env_file="$SCRIPT_DIR/.env"
+    if [ -f "$env_file" ]; then
+        local port=$(grep "^PORT=" "$env_file" | cut -d'=' -f2 | tr -d '[:space:]')
+        echo "${port:-5173}"
+    else
+        echo "5173"
+    fi
+}
+
 # Check if server is running
 is_server_running() {
     if [ -f "$PID_FILE" ]; then
@@ -124,6 +135,9 @@ start_server() {
     # Get local IPs for logging
     local local_ip=$(get_local_ips)
 
+    # Get port from .env
+    local port=$(get_server_port)
+
     # Start server in background with auto-restart
     (
         while true; do
@@ -160,12 +174,12 @@ start_server() {
         print_header "SERVER INFO"
         echo "  Status  : ${GREEN}RUNNING${NC}"
         echo "  PID     : $bg_pid"
-        echo "  URL     : ${CYAN}http://localhost:5173${NC}"
+        echo "  URL     : ${CYAN}http://localhost:$port${NC}"
         echo "  Network : Use your local IP from below for mobile access"
         echo ""
         echo "  Your Network IP:"
         if [ -n "$local_ip" ]; then
-            echo "             - ${CYAN}http://$local_ip:5173${NC}"
+            echo "             - ${CYAN}http://$local_ip:$port${NC}"
         fi
         echo ""
         echo -e "${CYAN}============================================================${NC}"
@@ -220,11 +234,14 @@ stop_server() {
 show_status() {
     print_header "Server Status"
 
+    # Get port from .env
+    local port=$(get_server_port)
+
     if is_server_running; then
         local pid=$(cat "$PID_FILE")
         echo "  Status: ${GREEN}RUNNING${NC}"
         echo "  PID:    $pid"
-        echo "  URL:    ${CYAN}http://localhost:5173${NC}"
+        echo "  URL:    ${CYAN}http://localhost:$port${NC}"
         echo ""
         echo "  Use 'mkd logs' to view logs"
         echo "  Use 'mkd stop' to stop the server"
