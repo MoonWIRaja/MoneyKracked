@@ -358,7 +358,7 @@
   <title>Budget - MoneyKracked</title>
 </svelte:head>
 
-<div class="flex h-[calc(100%+2rem)] lg:h-[calc(100%+4rem)] w-[calc(100%+4rem)] overflow-hidden bg-[var(--color-bg)] -m-4 lg:-m-8 border-black">
+<div class="flex flex-col h-full w-full overflow-hidden bg-[var(--color-bg)]">
   <!-- Main Budget Column -->
   <div class="flex-1 flex flex-col min-w-0 h-full relative bg-[var(--color-bg)]">
     <!-- App-like Inline Header -->
@@ -434,16 +434,16 @@
 
 <!-- Category Budgets -->
 <IsometricCard title="Budget Details">
-  <div class="flex items-center justify-between mb-6">
-    <h3 class="text-sm font-bold font-display uppercase text-[var(--color-text)] hidden sm:block">Categories</h3>
-    <div class="flex items-center gap-3">
-      <PixelButton variant="secondary" onclick={goToAICoach} class="flex-1 sm:flex-none py-3 px-3">
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+    <h3 class="text-sm font-bold font-display uppercase text-[var(--color-text)]">Categories</h3>
+    <div class="flex items-center gap-3 w-full sm:w-auto">
+      <PixelButton variant="secondary" onclick={goToAICoach} class="flex-1 sm:flex-none h-10 px-3">
          <span class="material-symbols-outlined text-sm">smart_toy</span>
-         <span class="text-[10px] sm:text-xs">AI SETUP</span>
+         <span class="text-[10px] sm:text-xs ml-1">AI SETUP</span>
       </PixelButton>
-      <PixelButton variant="primary" onclick={openAddModal} class="flex-1 sm:flex-none py-3 px-3">
+      <PixelButton variant="primary" onclick={openAddModal} class="flex-1 sm:flex-none h-10 px-3">
          <span class="material-symbols-outlined text-sm">add</span>
-         <span class="text-[10px] sm:text-xs">ADD BUDGET</span>
+         <span class="text-[10px] sm:text-xs ml-1">ADD BUDGET</span>
       </PixelButton>
     </div>
   </div>

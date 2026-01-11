@@ -837,7 +837,7 @@
 {#if currencyUpdateCounter >= 0}<!-- {currencyUpdateCounter} -->{/if}
 
 <!-- Page Header with Month Selector -->
-<div class="flex h-[calc(100%+2rem)] lg:h-[calc(100%+4rem)] w-[calc(100%+4rem)] overflow-hidden bg-[var(--color-bg)] -m-4 lg:-m-8 border-black">
+<div class="flex flex-col h-full w-full overflow-hidden bg-[var(--color-bg)]">
   <!-- Main Reports Column -->
   <div class="flex-1 flex flex-col min-w-0 h-full relative bg-[var(--color-bg)]">
     <!-- App-like Inline Header -->
@@ -846,11 +846,11 @@
             <button class="lg:hidden mr-2 p-2 -ml-2 text-[var(--color-text)] hover:bg-[var(--color-surface)] rounded-none transition-colors" onclick={toggleSidebar}>
               <span class="material-symbols-outlined">menu</span>
             </button>
-            <div>
-          <h2 class="text-lg md:text-xl font-display text-[var(--color-primary)]">FINANCIAL <span class="text-[var(--color-text)]">REPORTS</span></h2>
+        <div class="flex flex-col flex-1 min-w-0">
+          <h2 class="text-base md:text-xl font-display text-[var(--color-primary)] truncate">FINANCIAL <span class="text-[var(--color-text)]">REPORTS</span></h2>
           <p class="text-[9px] md:text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
             <span class="flex h-2 w-2 rounded-full bg-[var(--color-primary)] animate-pulse"></span>
-            Summary For {selectedMonthYear}
+            {selectedMonthYear}
           </p>
         </div>
       </div>
@@ -882,13 +882,14 @@
         </div>
 
         <div class="flex gap-2">
-            <PixelButton variant="primary" onclick={exportReport} class="h-10 px-3 sm:px-4">
+            <PixelButton variant="primary" onclick={exportReport} class="h-10 px-2 sm:px-4">
                 <span class="material-symbols-outlined text-sm">picture_as_pdf</span>
                 <span class="hidden sm:inline ml-1 text-[10px]">PDF</span>
             </PixelButton>
 
-            <PixelButton variant="secondary" onclick={exportCSV} class="hidden sm:flex h-10 text-[10px] py-2 px-4">
-                <span class="material-symbols-outlined text-sm">download</span> CSV
+            <PixelButton variant="secondary" onclick={exportCSV} class="h-10 px-2 sm:px-4">
+                <span class="material-symbols-outlined text-sm">download</span>
+                <span class="hidden sm:inline ml-1 text-[10px]">CSV</span>
             </PixelButton>
         </div>
       </div>

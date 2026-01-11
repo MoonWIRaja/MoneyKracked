@@ -59,6 +59,7 @@
   let chatSessions = $state<ChatSession[]>([]);
   let isLoadingSessions = $state(false);
   let showSidebar = $state(true);
+  let showMobileHistory = $state(false);
   let selectedSessionId = $state<string | null>(null);
 
   let showDeleteSessionModal = $state(false);
@@ -355,9 +356,9 @@
   <title>MonKrac AI Coach - MoneyKracked</title>
 </svelte:head>
 
-<div class="flex h-[calc(100%+2rem)] lg:h-[calc(100%+4rem)] w-[calc(100%+4rem)] overflow-hidden bg-[var(--color-bg)] -m-4 lg:-m-8 border-black">
+<div class="flex flex-col h-full w-full overflow-hidden bg-[var(--color-bg)]">
   <!-- Left Sidebar (History) -->
-  <aside class="hidden lg:flex w-80 flex-col border-r-4 border-black bg-[var(--color-surface)]">
+  <aside class="fixed inset-y-0 left-0 z-50 w-80 lg:static lg:flex flex-col border-r-4 border-black bg-[var(--color-surface)] transition-transform duration-300 {showMobileHistory ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'} {showMobileHistory ? 'flex' : 'hidden lg:flex'}">
     <div class="p-6 border-b-4 border-black bg-[var(--color-surface-raised)] shadow-md">
       <h2 class="text-lg font-display text-[var(--color-primary)] mb-4 flex items-center gap-2">
         <span class="material-symbols-outlined">history</span> HISTORY
@@ -384,7 +385,7 @@
             role="button"
             tabindex="0"
             class="w-full text-left group relative bg-[var(--color-bg)] border-2 border-black p-3 hover:translate-x-1 hover:bg-[var(--color-surface-raised)] transition-all cursor-pointer {selectedSessionId === session.sessionId ? 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)] ring-inset shadow-[4px_4px_0px_0px_black]' : 'shadow-[2px_2px_0px_0px_black]'}"
-            onclick={() => loadSessionMessages(session.sessionId)}
+            onclick={() => { loadSessionMessages(session.sessionId); showMobileHistory = false; }}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadSessionMessages(session.sessionId); } }}
           >
             <div class="flex justify-between items-start mb-1">
@@ -417,9 +418,14 @@
     <!-- App-like Inline Header -->
     <header class="h-20 flex items-center justify-between px-6 lg:px-10 border-b-4 border-black bg-[var(--color-surface-raised)] flex-shrink-0 z-20 shadow-lg">
       <div class="flex items-center gap-4">
-        <button class="lg:hidden h-10 w-10 border-2 border-black bg-[var(--color-surface)] flex items-center justify-center hover:bg-[var(--color-surface-raised)] transition-colors" onclick={toggleSidebar}>
-          <span class="material-symbols-outlined">menu</span>
-        </button>
+        <div class="flex items-center gap-2">
+            <button class="lg:hidden h-10 w-10 border-2 border-black bg-[var(--color-surface)] flex items-center justify-center hover:bg-[var(--color-surface-raised)] transition-colors" onclick={toggleSidebar}>
+              <span class="material-symbols-outlined">menu</span>
+            </button>
+            <button class="lg:hidden h-10 w-10 border-2 border-black bg-[var(--color-surface)] flex items-center justify-center hover:bg-[var(--color-surface-raised)] transition-colors" onclick={() => showMobileHistory = !showMobileHistory}>
+              <span class="material-symbols-outlined">history</span>
+            </button>
+        </div>
         <div>
           <h2 class="text-lg md:text-xl font-display text-[var(--color-primary)]">MONKRAC AI <span class="text-[var(--color-text)]">COACH</span></h2>
           <p class="text-[9px] md:text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2">
@@ -580,6 +586,14 @@
       </div>
     </footer>
   </div>
+  
+  <!-- Mobile History Backdrop -->
+  {#if showMobileHistory}
+    <div 
+      class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden" 
+      onclick={() => showMobileHistory = false}
+    ></div>
+  {/if}
 </div>
 
 <!-- Modal Background -->
