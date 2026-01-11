@@ -188,3 +188,20 @@ export function setAppTheme(theme: string) {
   }
 }
 
+// ============================================================
+// Sidebar Store - global control for mobile menu
+// ============================================================
+const sidebarState = $state({ isOpen: false });
+
+export function getSidebarState() {
+  return sidebarState.isOpen;
+}
+
+export function setSidebarState(isOpen: boolean) {
+  sidebarState.isOpen = isOpen;
+}
+
+export function toggleSidebar() {
+  sidebarState.isOpen = !sidebarState.isOpen;
+}
+

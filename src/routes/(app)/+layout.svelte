@@ -3,7 +3,7 @@
   import { PixelLoader, FloatingDecoration } from '$lib/components/ui';
   import type { Snippet } from 'svelte';
   import { onMount } from 'svelte';
-  import { initializeWithServerData, getAppTheme, setAppTheme } from '$lib/stores/app-store.svelte';
+  import { initializeWithServerData, getAppTheme, setAppTheme, getSidebarState, setSidebarState } from '$lib/stores/app-store.svelte';
   import { goto } from '$app/navigation';
 
   interface Props {
@@ -30,7 +30,8 @@
     image?: string | null;
   } | null>(null);
   
-  let mobileSidebarOpen = $state(false);
+  // Use global store for sidebar state
+  let mobileSidebarOpen = $derived(getSidebarState());
   let loading = $state(false);
 
   // ============================================================
@@ -95,28 +96,15 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div 
         class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden" 
-        onclick={() => mobileSidebarOpen = false}
+        onclick={() => setSidebarState(false)}
       ></div>
     {/if}
     
     <!-- Sidebar Navigation -->
-    <Sidebar user={user} mobileOpen={mobileSidebarOpen} onClose={() => mobileSidebarOpen = false} />
+    <Sidebar user={user} mobileOpen={mobileSidebarOpen} onClose={() => setSidebarState(false)} />
     
     <!-- Main Content wrapper -->
     <div class="flex-1 flex flex-col min-w-0 h-full">
-      <!-- Mobile Top Bar -->
-      <header class="lg:hidden flex items-center justify-between p-4 border-b-4 border-[var(--color-border)] bg-[var(--color-surface)] z-30">
-        <div class="flex items-center gap-3">
-            <img src="/logo.png" alt="MoneyKracked" class="h-8 w-auto object-contain" style="image-rendering: pixelated;" />
-             <span class="font-display text-[10px] text-[var(--color-primary)] uppercase tracking-tight">MoneyKracked</span>
-        </div>
-        <button
-          onclick={() => mobileSidebarOpen = true}
-          class="iso-btn p-2 min-w-0 bg-[var(--color-surface-raised)] shadow-[2px_2px_0px_0px_var(--color-shadow)]"
-        >
-          <span class="material-symbols-outlined">menu</span>
-        </button>
-      </header>
 
       <!-- Main Content Area -->
       <main class="flex-1 min-h-0 overflow-hidden p-4 lg:p-8 relative">

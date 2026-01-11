@@ -3,6 +3,7 @@
   import { IsometricCard, PixelButton } from '$lib/components/ui';
   import { onMount, tick } from 'svelte';
   import type { PageData } from './$types';
+  import { toggleSidebar } from '$lib/stores/app-store.svelte';
 
   interface Props {
     data: PageData;
@@ -416,7 +417,7 @@
     <!-- App-like Inline Header -->
     <header class="h-20 flex items-center justify-between px-6 lg:px-10 border-b-4 border-black bg-[var(--color-surface-raised)] flex-shrink-0 z-20 shadow-lg">
       <div class="flex items-center gap-4">
-        <button class="lg:hidden h-10 w-10 border-2 border-black bg-[var(--color-surface)] flex items-center justify-center">
+        <button class="lg:hidden h-10 w-10 border-2 border-black bg-[var(--color-surface)] flex items-center justify-center hover:bg-[var(--color-surface-raised)] transition-colors" onclick={toggleSidebar}>
           <span class="material-symbols-outlined">menu</span>
         </button>
         <div>

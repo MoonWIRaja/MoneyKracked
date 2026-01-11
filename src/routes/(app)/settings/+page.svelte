@@ -3,6 +3,7 @@
   import { authClient } from '$lib/auth-client';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
+  import { toggleSidebar } from '$lib/stores/app-store.svelte';
   import { onMount } from 'svelte';
   import { updateCurrency, subscribeToCurrency } from '$lib/stores/currency-store';
   import { setAppTheme } from '$lib/stores/app-store.svelte';
@@ -347,6 +348,9 @@
     <!-- App-like Inline Header -->
     <header class="h-20 flex items-center justify-between px-6 lg:px-10 border-b-4 border-black bg-[var(--color-surface-raised)] flex-shrink-0 z-20 shadow-lg">
       <div class="flex items-center gap-4">
+        <button class="lg:hidden mr-2 p-2 -ml-2 text-[var(--color-text)] hover:bg-[var(--color-surface)] rounded-none transition-colors" onclick={toggleSidebar}>
+          <span class="material-symbols-outlined">menu</span>
+        </button>
         <div>
           <h2 class="text-xl font-display text-[var(--color-primary)]">SYSTEM <span class="text-[var(--color-text)]">SETTINGS</span></h2>
           <p class="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
