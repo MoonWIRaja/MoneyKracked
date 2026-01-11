@@ -49,9 +49,7 @@
     <div class="flex flex-col gap-8">
       <!-- Brand -->
         <a href="/dashboard" class="flex items-center gap-3 px-2 group">
-          <div class="flex h-12 w-12 items-center justify-center border-2 border-[var(--color-border)] bg-[var(--color-primary)] text-black shadow-[4px_4px_0px_0px_var(--color-shadow)] group-hover:scale-105 transition-transform">
-            <span class="material-symbols-outlined">account_balance_wallet</span>
-          </div>
+          <img src="/logo.png" alt="MoneyKracked" class="h-12 w-auto object-contain group-hover:scale-105 transition-transform" style="image-rendering: pixelated;" />
           <div class="flex flex-col">
             <h1 class="text-xs font-bold leading-tight text-[var(--color-primary)] font-display tracking-tight uppercase group-hover:text-[var(--color-text)] transition-colors">Money<br>Kracked</h1>
           </div>
