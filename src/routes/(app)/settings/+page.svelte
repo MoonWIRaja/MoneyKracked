@@ -37,7 +37,6 @@
   
   let currency = $state('MYR');
   let theme = $state('dark');
-  let notifications = $state(true);
   let preferencesInitialized = $state(false);
 
   let githubLinked = $state(false);
@@ -67,7 +66,6 @@
         untrack(() => {
             currency = result.preferences.currency || 'MYR';
             theme = result.preferences.theme || 'dark';
-            notifications = result.preferences.notifications ?? true;
             preferencesInitialized = true;
         });
       }
@@ -84,7 +82,7 @@
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ currency, theme, notifications })
+        body: JSON.stringify({ currency, theme })
       });
       const result = await response.json();
       if (result.success) {
@@ -108,7 +106,7 @@
   let saveTimeout: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
     // Watch these values
-    const _ = currency + theme + notifications.toString();
+    const _ = currency + theme;
     
     if (typeof window !== 'undefined' && preferencesInitialized) {
       if (saveTimeout) clearTimeout(saveTimeout);
@@ -443,20 +441,6 @@
                         <span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">expand_more</span>
                     </div>
                 </div>
-
-                <div class="flex items-center justify-between py-2 border-t-2 border-[var(--color-surface-raised)]">
-                    <div>
-                        <p class="text-[10px] font-mono text-[var(--color-text)] uppercase tracking-widest">Notifications</p>
-                        <p class="text-[9px] font-mono text-[var(--color-text-muted)] uppercase mt-1">Budget alerts & tips</p>
-                    </div>
-                    <button 
-                        onclick={() => notifications = !notifications}
-                        aria-label="Toggle Notifications"
-                        class="w-14 h-8 border-4 border-black p-1 transition-all {notifications ? 'bg-[var(--color-primary)]' : 'bg-[var(--color-surface-raised)]'}"
-                    >
-                        <div class="h-full aspect-square bg-black transition-all {notifications ? 'translate-x-6' : 'translate-x-0'}"></div>
-                    </button>
-                </div>
             </div>
         </IsometricCard>
 
@@ -553,7 +537,10 @@
                             <button onclick={() => navigator.clipboard.writeText(setupSecret)} class="text-[var(--color-primary)]">Copy</button>
                         </div>
                     </div>
-                    <PixelButton variant="primary" class="w-full" onclick={() => setupStep = 'verify'}>Next Step</PixelButton>
+                    <div class="flex gap-2">
+                        <PixelButton variant="ghost" class="flex-1" onclick={() => showTwoFactorSetup = false}>Cancel</PixelButton>
+                        <PixelButton variant="primary" class="flex-1" onclick={() => setupStep = 'verify'}>Next</PixelButton>
+                    </div>
                 </div>
             {:else if setupStep === 'verify'}
                 <div class="space-y-4">
@@ -566,6 +553,7 @@
                         maxlength="6"
                     />
                     <div class="flex gap-2">
+                        <PixelButton variant="ghost" onclick={() => showTwoFactorSetup = false}>Cancel</PixelButton>
                         <PixelButton onclick={() => setupStep = 'scan'} class="flex-1">Back</PixelButton>
                         <PixelButton variant="primary" onclick={enableTwoFactor} class="flex-1">Verify</PixelButton>
                     </div>

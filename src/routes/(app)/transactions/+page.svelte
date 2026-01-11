@@ -27,14 +27,10 @@
   const dateFormatter = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 
   // ============================================================
-  // NON-REACTIVE CURRENCY STATE - avoids reactive cycles
-  // Reactive trigger counter forces template re-render on currency change
+  // REACTIVE CURRENCY STATE - automatically updates UI on change
   // ============================================================
-  // svelte-ignore non_reactive_update
-  let selectedCurrency: Currency = (getCachedPreferencesSync()?.currency as Currency) || 'MYR';
-  // svelte-ignore non_reactive_update
-  let exchangeRates: Record<string, Record<string, number>> = getCachedRatesSync() || {};
-  let currencyUpdateCounter = $state(0);  // Reactive trigger
+  let selectedCurrency = $state<Currency>((getCachedPreferencesSync()?.currency as Currency) || 'MYR');
+  let exchangeRates = $state<Record<string, Record<string, number>>>(getCachedRatesSync() || {});
   
   // Month/Year selector
   const currentDate = new Date();
@@ -147,20 +143,15 @@
       getUserPreferences()
     ]);
 
-    // svelte-ignore non_reactive_update
     if (rates) exchangeRates = rates;
-    // svelte-ignore non_reactive_update
     if (prefs?.currency) selectedCurrency = prefs.currency;
 
     await fetchBudgetCategories();
     await fetchTransactions();
 
     unsubscribeCurrency = subscribeToCurrency((currency, rates) => {
-      // svelte-ignore non_reactive_update
       selectedCurrency = currency;
-      // svelte-ignore non_reactive_update
       exchangeRates = rates;
-      currencyUpdateCounter++;  // Trigger template re-render
     });
 
     // Check for add=true parameter
@@ -474,9 +465,6 @@
   <title>Transactions - MoneyKracked</title>
 </svelte:head>
 
-<!-- Currency reactive trigger - forces re-render when currency changes -->
-{#if currencyUpdateCounter >= 0}<!-- {currencyUpdateCounter} -->{/if}
-
 <div class="flex h-[calc(100%+2rem)] lg:h-[calc(100%+4rem)] w-[calc(100%+4rem)] overflow-hidden bg-[var(--color-bg)] -m-4 lg:-m-8 border-black">
   <!-- Main Transactions Column -->
   <div class="flex-1 flex flex-col min-w-0 h-full relative bg-[var(--color-bg)]">
@@ -539,7 +527,7 @@
         <!-- Add Transaction Button -->
         {#if canAddTransaction}
           <PixelButton onclick={openAddModal} variant="primary" class="h-10 text-[10px] py-2 px-4">
-            <span class="material-symbols-outlined text-sm">add</span> ADD ENTRY
+            <span class="material-symbols-outlined text-sm">add</span> ADD TRANSACTION
           </PixelButton>
         {/if}
       </div>

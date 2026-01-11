@@ -24,14 +24,10 @@
   }
 
   // ============================================================
-  // NON-REACTIVE CURRENCY STATE - avoids reactive cycles
-  // Reactive trigger counter forces template re-render on currency change
+  // REACTIVE CURRENCY STATE - automatically updates UI on change
   // ============================================================
-  // svelte-ignore non_reactive_update
-  let selectedCurrency: Currency = (getCachedPreferencesSync()?.currency as Currency) || 'MYR';
-  // svelte-ignore non_reactive_update
-  let exchangeRates: Record<string, Record<string, number>> = getCachedRatesSync() || {};
-  let currencyUpdateCounter = $state(0);  // Reactive trigger
+  let selectedCurrency = $state<Currency>((getCachedPreferencesSync()?.currency as Currency) || 'MYR');
+  let exchangeRates = $state<Record<string, Record<string, number>>>(getCachedRatesSync() || {});
   
   interface Budget {
     id: string;
@@ -101,19 +97,14 @@
       getUserPreferences()
     ]);
 
-    // svelte-ignore non_reactive_update
     if (rates) exchangeRates = rates;
-    // svelte-ignore non_reactive_update
     if (prefs?.currency) selectedCurrency = prefs.currency;
 
     await loadBudgets();
 
     unsubscribeCurrency = subscribeToCurrency((currency, rates) => {
-      // svelte-ignore non_reactive_update
       selectedCurrency = currency;
-      // svelte-ignore non_reactive_update
       exchangeRates = rates;
-      currencyUpdateCounter++;  // Trigger template re-render
     });
   });
 
@@ -367,9 +358,6 @@
   <title>Budget - MoneyKracked</title>
 </svelte:head>
 
-<!-- Currency reactive trigger - forces re-render when currency changes -->
-{#if currencyUpdateCounter >= 0}<!-- {currencyUpdateCounter} -->{/if}
-
 <div class="flex h-[calc(100%+2rem)] lg:h-[calc(100%+4rem)] w-[calc(100%+4rem)] overflow-hidden bg-[var(--color-bg)] -m-4 lg:-m-8 border-black">
   <!-- Main Budget Column -->
   <div class="flex-1 flex flex-col min-w-0 h-full relative bg-[var(--color-bg)]">
@@ -410,10 +398,6 @@
             <span class="material-symbols-outlined">chevron_right</span>
           </button>
         </div>
-
-        <PixelButton variant="primary" onclick={openAddModal} class="h-10 text-[10px] py-2 px-4">
-          <span class="material-symbols-outlined text-sm">add</span> ADD BUDGET
-        </PixelButton>
       </div>
     </header>
 

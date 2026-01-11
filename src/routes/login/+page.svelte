@@ -109,7 +109,7 @@
   <title>Login - MoneyKracked</title>
 </svelte:head>
 
-<div class="min-h-screen bg-[var(--color-bg)] flex flex-col items-center justify-center p-6 relative overflow-hidden">
+<div class="min-h-screen bg-[var(--color-bg)] flex flex-col relative overflow-hidden">
   <!-- 3D Decorations in background -->
   <FloatingDecoration top="10%" left="10%" color="var(--color-primary)" size="30px" delay="0s" rotate="10deg" />
   <FloatingDecoration top="80%" left="15%" color="var(--color-secondary)" size="25px" delay="2s" rotate="-15deg" />
@@ -117,20 +117,26 @@
   <FloatingDecoration top="70%" left="85%" color="var(--color-warning)" size="35px" delay="1s" rotate="-20deg" />
 
   <!-- Decorative Grid Background (Same as layout) -->
-  <div class="absolute inset-0 opacity-10 pointer-events-none" 
+  <div class="absolute inset-0 opacity-10 pointer-events-none"
     style="background-image: radial-gradient(var(--color-primary) 1px, transparent 1px); background-size: 24px 24px;">
   </div>
 
-  <div class="w-full max-w-sm relative z-10">
-    <!-- Brand -->
-    <div class="text-center mb-10">
-      <div class="inline-flex items-center justify-center w-20 h-20 border-4 border-black bg-[var(--color-primary)] shadow-[4px_4px_0px_0px_var(--color-shadow)] mb-4">
-        <span class="material-symbols-outlined text-4xl text-black">account_balance_wallet</span>
+  <!-- Inline Header -->
+  <header class="h-20 flex items-center justify-between px-6 lg:px-10 border-b-4 border-black bg-[var(--color-surface-raised)] flex-shrink-0 z-20 shadow-lg">
+    <div class="flex items-center gap-4">
+      <div>
+        <h2 class="text-xl font-display text-[var(--color-primary)]">SYSTEM <span class="text-[var(--color-text)]">LOGIN</span></h2>
+        <p class="text-[10px] font-mono text-[var(--color-text-muted)] flex items-center gap-2 uppercase">
+          <span class="flex h-2 w-2 rounded-full bg-[var(--color-primary)] animate-pulse"></span>
+          Secure Access Portal
+        </p>
       </div>
-      <h1 class="text-2xl font-display text-[var(--color-primary)] tracking-tight uppercase px-2">MoneyKracked</h1>
-      <p class="text-[12px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest mt-1">Secure Access</p>
     </div>
+  </header>
 
+  <!-- Main Content -->
+  <div class="flex-1 flex items-center justify-center p-6 relative z-10">
+    <div class="w-full max-w-sm">
     <IsometricCard title={showTwoFactor ? "Security Lock" : "Account Login"}>
       {#if showTwoFactor}
         <div class="space-y-6">
@@ -236,5 +242,6 @@
     <p class="text-center mt-8 text-[8px] font-mono text-[var(--color-text-muted)] uppercase tracking-widest opacity-50">
       System Version 4.0.0 Stable
     </p>
+    </div>
   </div>
 </div>

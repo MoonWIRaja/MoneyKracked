@@ -78,11 +78,10 @@
   }
 
   // ============================================================
-  // NON-REACTIVE CURRENCY STATE - avoids reactive cycles
-  // Only the computed output values are reactive
+  // REACTIVE CURRENCY STATE - automatically updates UI on change
   // ============================================================
-  let selectedCurrency: Currency = 'MYR';
-  let exchangeRates: Record<string, Record<string, number>> = {};
+  let selectedCurrency = $state<Currency>('MYR');
+  let exchangeRates = $state<Record<string, Record<string, number>>>({});
 
   // UI state
   let loading = $state(false);
@@ -279,7 +278,7 @@
       return;
     }
 
-    // Initialize currency from props (non-reactive assignment)
+    // Initialize currency from props
     if (data.currency) selectedCurrency = data.currency as Currency;
     if (data.rates) exchangeRates = data.rates;
 
@@ -288,7 +287,6 @@
 
     // Subscribe to currency changes using lazy subscription (no immediate callback)
     const unsubscribe = subscribeToCurrencyLazy((currency, rates) => {
-      // Non-reactive assignment - doesn't trigger reactive effects
       selectedCurrency = currency;
       exchangeRates = rates;
       // Manually trigger data processing
@@ -393,9 +391,6 @@
       </div>
       
       <div class="flex items-center gap-4">
-        <PixelButton variant="primary" onclick={() => goto('/transactions?add=true')} class="hidden md:flex text-[10px] py-2 px-4 h-10">
-          <span class="material-symbols-outlined text-sm">add</span> ADD TRANSACTION
-        </PixelButton>
         <button class="h-10 w-10 border-2 border-black bg-[var(--color-surface)] flex items-center justify-center hover:bg-[var(--color-surface-raised)] transition-colors" onclick={() => invalidateAll()}>
           <span class="material-symbols-outlined">refresh</span>
         </button>
